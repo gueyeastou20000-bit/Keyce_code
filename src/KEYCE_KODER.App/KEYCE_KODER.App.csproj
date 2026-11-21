@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
+    <StartupObject>KEYCE_KODER.App.Program</StartupObject>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\KEYCE_KODER.Core\KEYCE_KODER.Core.csproj" />
+    <ProjectReference Include="..\KEYCE_KODER.Editor\KEYCE_KODER.Editor.csproj" />
+    <ProjectReference Include="..\KEYCE_KODER.Runner\KEYCE_KODER.Runner.csproj" />
+    <ProjectReference Include="..\KEYCE_KODER.Terminal\KEYCE_KODER.Terminal.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\logo.png" CopyToOutputDirectory="PreserveNewest" />
+    <Resource Include="Assets\app.ico" />
+  </ItemGroup>
+</Project>
