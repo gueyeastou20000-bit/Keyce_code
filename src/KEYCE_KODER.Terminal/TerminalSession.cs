@@ -13,11 +13,14 @@ public enum TerminalShell { PowerShell, Cmd }
 /// À instancier sur le thread UI.</summary>
 public sealed class TerminalSession : IDisposable
 {
-    private readonly SynchronizationContext? _ui = SynchronizationContext.Current;
     private readonly object _gate = new();
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private Process? _proc;
     private OutputPump? _pump;
+
+    /// <summary>Contexte sur lequel les événements sont levés (thread UI). À renseigner explicitement en WPF ;
+    /// sinon capturé au premier Start.</summary>
+    public SynchronizationContext? UiContext { get; set; } = SynchronizationContext.Current;
 
     public TerminalShell Shell { get; }
     public string WorkingDirectory { get; set; }
@@ -38,6 +41,7 @@ public sealed class TerminalSession : IDisposable
         lock (_gate)
         {
             if (_proc is { HasExited: false }) return;
+            UiContext ??= SynchronizationContext.Current;
 
             var utf8 = new UTF8Encoding(false);
             var psi = new ProcessStartInfo(Shell == TerminalShell.PowerShell ? "powershell.exe" : "cmd.exe")
@@ -60,7 +64,7 @@ public sealed class TerminalSession : IDisposable
             var proc = Process.Start(psi) ?? throw new InvalidOperationException("Impossible de démarrer le shell.");
             proc.StandardInput.AutoFlush = true;
 
-            var pump = new OutputPump(b => OutputReceived?.Invoke(this, b), _ui);
+            var pump = new OutputPump(b => OutputReceived?.Invoke(this, b), UiContext);
             _proc = proc;
             _pump = pump;
 
@@ -134,7 +138,7 @@ public sealed class TerminalSession : IDisposable
             await Task.WhenAny(Task.WhenAll(outT, errT), Task.Delay(1000));
             await pump.CompleteAsync();
             var code = proc.ExitCode;
-            UiDispatch.Post(_ui, () => Exited?.Invoke(this, code));
+            UiDispatch.Post(UiContext, () => Exited?.Invoke(this, code));
         }
         catch (Exception) { /* process déjà libéré */ }
         finally { proc.Dispose(); }
