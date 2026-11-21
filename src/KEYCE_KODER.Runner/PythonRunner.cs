@@ -9,11 +9,15 @@ namespace KEYCE_KODER.Runner;
 /// <summary>À instancier sur le thread UI (capture du SynchronizationContext).</summary>
 public sealed class PythonRunner : IScriptRunner
 {
-    private readonly SynchronizationContext? _ui = SynchronizationContext.Current;
     private readonly object _gate = new();
     private CancellationTokenSource? _cts;
     private bool _stopRequested;
+    private Process? _proc;
     private RunState _state = RunState.Idle;
+
+    /// <summary>Contexte sur lequel les événements sont levés (thread UI). À renseigner explicitement en WPF ;
+    /// sinon capturé au premier Run.</summary>
+    public SynchronizationContext? UiContext { get; set; } = SynchronizationContext.Current;
 
     public string? CustomPythonPath { get; set; }
     public TimeSpan DefaultTimeout { get; set; } = TimeSpan.FromSeconds(60);
@@ -26,6 +30,8 @@ public sealed class PythonRunner : IScriptRunner
 
     public async Task RunAsync(string scriptPath, IEnumerable<string>? args = null, TimeSpan? timeout = null)
     {
+        UiContext ??= SynchronizationContext.Current;
+
         CancellationTokenSource cts;
         lock (_gate)
         {
@@ -35,9 +41,9 @@ public sealed class PythonRunner : IScriptRunner
             _stopRequested = false;
             cts = _cts = new CancellationTokenSource();
         }
-        UiDispatch.Post(_ui, () => StateChanged?.Invoke(this, EventArgs.Empty));
+        UiDispatch.Post(UiContext, () => StateChanged?.Invoke(this, EventArgs.Empty));
 
-        var pump = new OutputPump(batch => OutputReceived?.Invoke(this, batch), _ui);
+        var pump = new OutputPump(batch => OutputReceived?.Invoke(this, batch), UiContext);
         var sw = Stopwatch.StartNew();
         var result = RunResult.FailedToStart;
         int? exitCode = null;
@@ -62,6 +68,7 @@ public sealed class PythonRunner : IScriptRunner
             pump.Write(new(OutputKind.Info, $"> {python.Display} {Path.GetFileName(full)}\n"));
 
             proc.Start();
+            lock (_gate) _proc = proc;
             proc.StandardInput.Close(); // pas d'entrée interactive : input() lève EOFError au lieu de bloquer
 
             var outTask = ReadLinesAsync(proc.StandardOutput, OutputKind.StdOut, pump);
@@ -106,15 +113,17 @@ public sealed class PythonRunner : IScriptRunner
         }
         finally
         {
-            await pump.CompleteAsync(); // garantit que Completed arrive après le dernier lot
+            // Garantit que Completed arrive après le dernier lot ; une erreur d'affichage ne doit jamais bloquer l'état.
+            try { await pump.CompleteAsync(); } catch (Exception) { }
             lock (_gate)
             {
                 _cts?.Dispose();
                 _cts = null;
+                _proc = null;
                 _state = RunState.Idle;
             }
             var args2 = new RunCompletedEventArgs(result, exitCode, sw.Elapsed);
-            UiDispatch.Post(_ui, () =>
+            UiDispatch.Post(UiContext, () =>
             {
                 Completed?.Invoke(this, args2);
                 StateChanged?.Invoke(this, EventArgs.Empty);
@@ -128,7 +137,8 @@ public sealed class PythonRunner : IScriptRunner
         {
             if (_state != RunState.Running) return;
             _stopRequested = true;
-            _cts?.Cancel();
+            _cts?.Cancel();            // d'abord : le résultat sera « Stopped »
+            if (_proc is { } p) Kill(p);   // puis arrêt immédiat du processus et de ses enfants
         }
     }
 
