@@ -1,13 +1,17 @@
-
+﻿using System;
+using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
+
+using KEYCE_KODER.App.Commands;
+using KEYCE_KODER.App.Views;
 using KEYCE_KODER.Core.Models;
 using KEYCE_KODER.Core.Services;
 using KEYCE_KODER.Editor.Controls;
 using KEYCE_KODER.Editor.Services;
-using System;
-using System.IO;
-using System.Windows.Media.Imaging;
 
 namespace KEYCE_KODER.App;
 
@@ -21,30 +25,20 @@ public class MainWindow : Window
     private readonly EditorService _editorService;
 
     private readonly Document _currentDocument;
+
     public MainWindow()
     {
+        Icon = new BitmapImage(
+            new Uri("pack://application:,,,/Assets/app.ico"));
 
-	// Icône de l'application
-	// Icône de la fenêtre
-    Icon = new BitmapImage(
-        new Uri("pack://application:,,,/Assets/app.ico")
-    );
-
-    Title = "KEYCE KODER";
-	Icon = new BitmapImage(
-    	new Uri("pack://application:,,,/Assets/app.ico")
-	);
+        Title = "KEYCE KODER";
         Width = 1200;
         Height = 750;
         MinWidth = 900;
         MinHeight = 600;
 
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
-
-        Background = new SolidColorBrush(
-            Color.FromRgb(30, 30, 30)
-        );
-
+        Background = new SolidColorBrush(Color.FromRgb(30, 30, 30));
         Foreground = Brushes.White;
 
         // Initialisation des services Core
@@ -53,15 +47,13 @@ public class MainWindow : Window
 
         _documentService = new DocumentService(
             _documentManager,
-            _fileService
-        );
+            _fileService);
 
-        // Création de l'éditeur
+        // Initialisation de l'éditeur
         _codeEditor = new CodeEditor();
-
         _editorService = new EditorService(_codeEditor);
 
-        // Création du document de démonstration
+        // Document Python de démonstration
         _currentDocument = _documentService.CreateDocument();
 
         _currentDocument.Content =
@@ -69,13 +61,67 @@ public class MainWindow : Window
             "    print(f\"Bonjour {nom} !\")\n\n" +
             "saluer(\"KEYCE KODER\")";
 
-        // Association du document à l'éditeur
-        // Association du document à l'éditeur
-	_editorService.SetDocument(_currentDocument);
+        _editorService.SetDocument(_currentDocument);
+        _editorService.SetLanguage("main.py");
 
-	// Activation de la coloration Python pour la démonstration
-	_editorService.SetLanguage("main.py");
+        // Création des panneaux de navigation
+        var activityBar = new ActivityBar();
+        var sidebar = new Sidebar();
 
-	Content = _codeEditor;
+        // Navigation entre les vues
+        activityBar.ViewSelected += sidebar.ShowView;
+
+        // Ouverture des fichiers depuis l'Explorateur
+        sidebar.Explorer.FileOpenRequested +=
+            path => _ = OpenFileAsync(path);
+
+        // Mise en page : Activity Bar | Sidebar | Éditeur
+        var grid = new Grid();
+
+        grid.ColumnDefinitions.Add(
+            new ColumnDefinition { Width = GridLength.Auto });
+
+        grid.ColumnDefinitions.Add(
+            new ColumnDefinition { Width = GridLength.Auto });
+
+        grid.ColumnDefinitions.Add(
+            new ColumnDefinition
+            {
+                Width = new GridLength(1, GridUnitType.Star)
+            });
+
+        Grid.SetColumn(activityBar, 0);
+        Grid.SetColumn(sidebar, 1);
+        Grid.SetColumn(_codeEditor, 2);
+
+        grid.Children.Add(activityBar);
+        grid.Children.Add(sidebar);
+        grid.Children.Add(_codeEditor);
+
+        Content = grid;
+
+        // Raccourci Ctrl+B : afficher ou masquer la Sidebar
+        InputBindings.Add(new KeyBinding(
+            new RelayCommand(sidebar.Toggle),
+            Key.B,
+            ModifierKeys.Control));
+    }
+
+    private async Task OpenFileAsync(string path)
+    {
+        try
+        {
+            var document = await _documentService.OpenDocumentAsync(path);
+
+            _editorService.SetDocument(document);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"Impossible d'ouvrir le fichier :\n{ex.Message}",
+                "Erreur d'ouverture",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
     }
 }
