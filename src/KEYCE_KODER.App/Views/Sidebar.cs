@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using KEYCE_KODER.App.Search;
+using KEYCE_KODER.App.Themes;
 
 namespace KEYCE_KODER.App.Views;
 
@@ -10,9 +11,10 @@ public class Sidebar : Border
 {
     private readonly TextBlock _title = new()
     {
-        Foreground = Brushes.White,
+        Foreground = ThemeColors.Brush(ThemeColors.TextPrimary),
         FontWeight = FontWeights.Bold,
-        Margin = new Thickness(10)
+        FontSize = 12,
+        Margin = new Thickness(16, 18, 10, 18)
     };
 
     private readonly ContentControl _content = new();
@@ -25,15 +27,20 @@ public class Sidebar : Border
     public Sidebar()
     {
         Width = 250;
-        Background = new SolidColorBrush(Color.FromRgb(37, 37, 38));
+
+        Background = ThemeColors.Brush(ThemeColors.Sidebar);
+        BorderBrush = ThemeColors.Brush(ThemeColors.Border);
+        BorderThickness = new Thickness(0, 0, 1, 0);
 
         _views["explorer"] = Explorer;
+
         Search = new SearchPanel(() => Explorer.CurrentFolder);
         _views["search"] = Search;
 
         var dock = new DockPanel();
 
         DockPanel.SetDock(_title, Dock.Top);
+
         dock.Children.Add(_title);
         dock.Children.Add(_content);
 
