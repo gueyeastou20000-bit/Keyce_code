@@ -3,7 +3,7 @@
 public enum SaveChangesChoice
 {
     Save,
-    Discard,
+    DontSave,
     Cancel  
 }
 

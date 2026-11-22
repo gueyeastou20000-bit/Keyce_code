@@ -17,24 +17,33 @@ using KEYCE_KODER.Editor.Controls;
 using KEYCE_KODER.Editor.Services;
 using KEYCE_KODER.Runner;
 using KEYCE_KODER.Terminal;
+using System.ComponentModel;
+using KEYCE_KODER.App.Actions;
+using KEYCE_KODER.App.Services;
+
+using KEYCE_KODER.App.Tabs;
 
 namespace KEYCE_KODER.App;
 
 public class MainWindow : Window
 {
-    private readonly CodeEditor _codeEditor;
 
+    // Onglets d'édition : un onglet par fichier ouvert
+    private readonly TabControl _tabControl;
+    private readonly TabManager _tabManager;
+    private readonly FileActions _fileActions;
+    private bool _closeConfirmed;
     private readonly DocumentManager _documentManager;
     private readonly FileService _fileService;
     private readonly DocumentService _documentService;
-    private readonly EditorService _editorService;
+   
 
     // Exécution : Runner Python + terminal intégré + panneau inférieur
     private readonly PythonRunner _runner;
     private readonly TerminalSession _terminal;
     private readonly BottomPanel _bottomPanel;
 
-    private readonly Document _currentDocument;
+   
 
     public MainWindow()
     {
@@ -59,20 +68,32 @@ public class MainWindow : Window
             _documentManager,
             _fileService);
 
-        // Initialisation de l'éditeur
-        _codeEditor = new CodeEditor();
-        _editorService = new EditorService(_codeEditor);
+        // Onglets d'édition : un onglet par fichier ouvert
+        _tabControl = new TabControl
+        {
+            Background = new SolidColorBrush(Color.FromRgb(30, 30, 30)),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(0)
+        };
+        _tabManager = new TabManager(_tabControl);
 
-        // Document Python de démonstration
-        _currentDocument = _documentService.CreateDocument();
+        // Actions du menu Fichier (nouveau, ouvrir, enregistrer, fermer...)
+        _fileActions = new FileActions(
+            _documentService,
+            _documentManager,
+            _tabManager,
+            new WpfDialogService(this));
 
-        _currentDocument.Content =
+        // Document Python de démonstration, ouvert dans le premier onglet
+        var demo = _documentService.CreateDocument();
+        demo.Content =
             "def saluer(nom):\n" +
             "    print(f\"Bonjour {nom} !\")\n\n" +
             "saluer(\"KEYCE KODER\")";
+        demo.MarkSaved(); // la démo n'est pas considérée comme « modifiée »
 
-        _editorService.SetDocument(_currentDocument);
-        _editorService.SetLanguage("main.py");
+        var demoTab = _tabManager.Open(demo);
+        demoTab.EditorService.SetLanguage("main.py");
 
         // Exécution (créés ici, sur le thread UI : les événements reviennent sur ce thread)
         var uiContext = new DispatcherSynchronizationContext(Dispatcher);
@@ -95,7 +116,7 @@ public class MainWindow : Window
 
         // Ouverture des fichiers depuis l'Explorateur
         sidebar.Explorer.FileOpenRequested +=
-            path => _ = OpenFileAsync(path);
+    path => _ = _fileActions.OpenPathAsync(path);
 
         // Mise en page : Activity Bar | Sidebar | (Éditeur / Panneau inférieur)
         var grid = new Grid();
@@ -141,11 +162,11 @@ public class MainWindow : Window
             Background = new SolidColorBrush(Color.FromRgb(60, 60, 60))
         };
 
-        Grid.SetRow(_codeEditor, 0);
+        Grid.SetRow(_tabControl, 0);
         Grid.SetRow(splitter, 1);
         Grid.SetRow(_bottomPanel, 2);
 
-        editorArea.Children.Add(_codeEditor);
+        editorArea.Children.Add(_tabControl);
         editorArea.Children.Add(splitter);
         editorArea.Children.Add(_bottomPanel);
 
@@ -176,19 +197,36 @@ public class MainWindow : Window
             Key.F5,
             ModifierKeys.Shift));
 
+        // Raccourcis du menu Fichier et des onglets
+        AddShortcut(_fileActions.NewFile, Key.N, ModifierKeys.Control);
+        AddShortcut(async () => await _fileActions.OpenAsync(), Key.O, ModifierKeys.Control);
+        AddShortcut(async () => await _fileActions.SaveAsync(), Key.S, ModifierKeys.Control);
+        AddShortcut(async () => await _fileActions.SaveAsAsync(), Key.S, ModifierKeys.Control | ModifierKeys.Shift);
+        AddShortcut(async () => await _fileActions.CloseActiveAsync(), Key.W, ModifierKeys.Control);
+        AddShortcut(_tabManager.ActivateNext, Key.Tab, ModifierKeys.Control);
+        AddShortcut(_tabManager.ActivatePrevious, Key.Tab, ModifierKeys.Control | ModifierKeys.Shift);
+
         // Fermeture propre : plus aucun processus Python ou shell orphelin
-        Closing += (_, _) =>
-        {
-            _runner.Stop();
-            _terminal.Dispose();
-        };
+        Closing += OnWindowClosing;
     }
 
     /// <summary>Enregistre le fichier actif si nécessaire et renvoie le chemin à exécuter.</summary>
     private async Task<string?> PrepareScriptAsync()
     {
-        var path = _editorService.FilePath;
-        var text = _editorService.Text;
+        var tab = _tabManager.ActiveTab;
+        if (tab is null)
+        {
+            MessageBox.Show(
+                "Aucun fichier ouvert à exécuter.",
+                "KEYCE KODER",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return null;
+        }
+
+        var editorService = tab.EditorService;
+        var path = editorService.FilePath;
+        var text = editorService.Text;
         var utf8 = new UTF8Encoding(false);
 
         // Document sans fichier (démo ou nouveau) : copie temporaire
@@ -213,30 +251,40 @@ public class MainWindow : Window
         }
 
         // Sauvegarde avant exécution
-        if (_editorService.IsModified)
+        if (editorService.IsModified)
         {
             await File.WriteAllTextAsync(path, text, utf8);
-            _editorService.MarkSaved(path);
+            editorService.MarkSaved(path);
+            tab.RefreshHeader(); // le ● disparaît de l'onglet
         }
 
         return path;
     }
 
-    private async Task OpenFileAsync(string path)
+    private void AddShortcut(Action action, Key key, ModifierKeys modifiers)
     {
-        try
-        {
-            var document = await _documentService.OpenDocumentAsync(path);
+        InputBindings.Add(new KeyBinding(new RelayCommand(action), key, modifiers));
+    }
 
-            _editorService.SetDocument(document);
-        }
-        catch (Exception ex)
+    private async void OnWindowClosing(object? sender, CancelEventArgs e)
+    {
+        if (!_closeConfirmed)
         {
-            MessageBox.Show(
-                $"Impossible d'ouvrir le fichier :\n{ex.Message}",
-                "Erreur d'ouverture",
-                MessageBoxButton.OK,
-                MessageBoxImage.Error);
+            // On bloque la fermeture le temps de demander « Enregistrer ? »
+            e.Cancel = true;
+
+            if (!await _fileActions.ConfirmCloseAllAsync())
+                return; // l'utilisateur a annulé : on reste ouvert
+
+            _closeConfirmed = true;
+
+            // Close() est interdit pendant l'événement Closing : on le reporte
+            _ = Dispatcher.BeginInvoke(new Action(Close));
+            return;
         }
+
+        // Fermeture confirmée : plus aucun processus Python ou shell orphelin
+        _runner.Stop();
+        _terminal.Dispose();
     }
 }

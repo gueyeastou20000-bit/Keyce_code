@@ -37,6 +37,11 @@ public class CodeEditor : UserControl
 
         Content = _editor;
     }
+    /// <summary>
+    /// Accès à l'éditeur AvalonEdit interne.
+    /// Utilisé par EditorActions (menu Édition, recherche/remplacement).
+    /// </summary>
+    public TextEditor InnerEditor => _editor;
 
     public string Text
     {
