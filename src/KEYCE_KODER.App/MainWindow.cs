@@ -141,6 +141,21 @@ public class MainWindow : Window
         sidebar.Explorer.FileOpenRequested +=
     path => _ = _fileActions.OpenPathAsync(path);
 
+        // Recherche dans les fichiers : ouvrir le fichier et surligner l'occurrence
+        sidebar.Search.MatchOpenRequested += async (path, index, length) =>
+        {
+            await _fileActions.OpenPathAsync(path);
+
+            EditorTab? tab = _tabManager.FindByPath(path);
+            if (tab is null)
+                return; // ouverture impossible (le message d'erreur a déjà été affiché)
+
+            // On attend que l'éditeur soit affiché avant de sélectionner le mot
+            _ = Dispatcher.BeginInvoke(
+                DispatcherPriority.Loaded,
+                new Action(() => tab.Actions.Select(index, length)));
+        };
+
         // Mise en page : Activity Bar | Sidebar | (Éditeur / Panneau inférieur)
         var grid = new Grid();
 
