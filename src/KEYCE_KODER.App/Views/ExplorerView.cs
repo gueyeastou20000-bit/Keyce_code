@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using Microsoft.Win32;
+using KEYCE_KODER.App.Themes;
 
 namespace KEYCE_KODER.App.Views;
 
@@ -26,7 +27,8 @@ public class ExplorerView : DockPanel
     {
         Background = Brushes.Transparent,
         BorderThickness = new Thickness(0),
-        Foreground = Brushes.White
+        Foreground = ThemeColors.Brush(ThemeColors.TextPrimary),
+        Padding = new Thickness(5)
     };
 
     private string? _currentPath;
@@ -36,11 +38,18 @@ public class ExplorerView : DockPanel
 
     public ExplorerView()
     {
+        Background = Brushes.Transparent;
+
         var openButton = new Button
         {
             Content = "Ouvrir un dossier",
-            Padding = new Thickness(8, 4, 8, 4),
-            Margin = new Thickness(0, 0, 6, 0)
+            Padding = new Thickness(8, 5, 8, 5),
+            Margin = new Thickness(0, 0, 6, 0),
+            Background = ThemeColors.Brush(ThemeColors.Panel),
+            Foreground = ThemeColors.Brush(ThemeColors.TextPrimary),
+            BorderBrush = ThemeColors.Brush(ThemeColors.Border),
+            Cursor = System.Windows.Input.Cursors.Hand,
+            FontSize = 12
         };
 
         openButton.Click += (_, _) => ChooseFolder();
@@ -53,9 +62,11 @@ public class ExplorerView : DockPanel
             Height = 32,
             Padding = new Thickness(0),
             Background = Brushes.Transparent,
+            Foreground = ThemeColors.Brush(ThemeColors.TextPrimary),
             BorderThickness = new Thickness(0),
             HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalContentAlignment = VerticalAlignment.Center
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Cursor = System.Windows.Input.Cursors.Hand
         };
 
         refreshButton.Click += (_, _) =>
@@ -66,7 +77,7 @@ public class ExplorerView : DockPanel
 
         var toolbar = new DockPanel
         {
-            Margin = new Thickness(10, 0, 10, 8)
+            Margin = new Thickness(12, 8, 10, 10)
         };
 
         DockPanel.SetDock(refreshButton, Dock.Right);
@@ -102,9 +113,10 @@ public class ExplorerView : DockPanel
         panel.Children.Add(new TextBlock
         {
             Text = text,
-            Foreground = Brushes.White,
+            Foreground = ThemeColors.Brush(ThemeColors.TextPrimary),
             Margin = new Thickness(7, 0, 0, 0),
-            VerticalAlignment = VerticalAlignment.Center
+            VerticalAlignment = VerticalAlignment.Center,
+            FontSize = 12
         });
 
         return panel;
@@ -149,7 +161,9 @@ public class ExplorerView : DockPanel
                 isDirectory ? "folder" : "file"),
 
             Tag = path,
-            Foreground = Brushes.White
+            Foreground = ThemeColors.Brush(ThemeColors.TextPrimary),
+            Padding = new Thickness(3),
+            FontSize = 12
         };
 
         if (isDirectory)
@@ -236,7 +250,7 @@ public class ExplorerView : DockPanel
         parent.Items.Add(new TreeViewItem
         {
             Header = message,
-            Foreground = Brushes.Gray,
+            Foreground = ThemeColors.Brush(ThemeColors.TextSecondary),
             IsEnabled = false
         });
     }
