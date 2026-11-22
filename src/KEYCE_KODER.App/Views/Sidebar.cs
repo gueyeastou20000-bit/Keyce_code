@@ -2,6 +2,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using KEYCE_KODER.App.Search;
 
 namespace KEYCE_KODER.App.Views;
 
@@ -19,18 +20,16 @@ public class Sidebar : Border
 
     public ExplorerView Explorer { get; } = new();
 
+    public SearchPanel Search { get; }
+
     public Sidebar()
     {
         Width = 250;
         Background = new SolidColorBrush(Color.FromRgb(37, 37, 38));
 
         _views["explorer"] = Explorer;
-        _views["search"] = new TextBlock
-        {
-            Text = "La recherche arrive bientôt...",
-            Foreground = Brushes.Gray,
-            Margin = new Thickness(10)
-        };
+        Search = new SearchPanel(() => Explorer.CurrentFolder);
+        _views["search"] = Search;
 
         var dock = new DockPanel();
 
