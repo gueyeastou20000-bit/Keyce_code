@@ -8,17 +8,16 @@ using KEYCE_KODER.Core.Execution;
 
 namespace KEYCE_KODER.App.Views;
 
-/// <summary>Zone de texte en lecture seule, colorée selon le type de sortie (stdout, stderr, info).
-/// Ne conserve que les <see cref="MaxLines"/> dernières lignes pour rester fluide.</summary>
+/// <summary>Zone de sortie en lecture seule avec conservation limitée des lignes.</summary>
 public sealed class ConsoleView : RichTextBox
 {
     private const int ChunkLines = 200;
 
     private static readonly Regex AnsiCodes = new(@"\x1B\[[0-9;?]*[ -/]*[@-~]", RegexOptions.Compiled);
 
-    private static readonly Brush StdOutBrush = Frozen(212, 212, 212);
-    private static readonly Brush StdErrBrush = Frozen(244, 135, 113);
-    private static readonly Brush InfoBrush = Frozen(133, 133, 133);
+    private static readonly Brush StdOutBrush = Frozen(218, 222, 232);
+    private static readonly Brush StdErrBrush = Theme.Red;
+    private static readonly Brush InfoBrush = Theme.Muted;
 
     private readonly Paragraph _paragraph = new() { Margin = new Thickness(0) };
     private readonly Queue<(Run Run, int Lines)> _chunks = new();
@@ -29,15 +28,19 @@ public sealed class ConsoleView : RichTextBox
     public ConsoleView()
     {
         IsReadOnly = true;
-        Background = Frozen(30, 30, 30);
+        Background = Theme.Panel;
         Foreground = StdOutBrush;
         BorderThickness = new Thickness(0);
         FontFamily = new FontFamily("Cascadia Mono, Consolas, Courier New");
         FontSize = 13;
-        Padding = new Thickness(8, 4, 8, 4);
+        Padding = new Thickness(12, 8, 12, 8);
         VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
         HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
-        Document = new FlowDocument(_paragraph) { PagePadding = new Thickness(0) };
+        Document = new FlowDocument(_paragraph)
+        {
+            PagePadding = new Thickness(0),
+            Background = Theme.Panel
+        };
     }
 
     /// <summary>Ajoute un lot de sorties (à appeler depuis le thread UI).</summary>

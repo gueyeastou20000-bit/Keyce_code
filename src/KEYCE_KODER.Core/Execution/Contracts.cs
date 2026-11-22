@@ -20,4 +20,7 @@ public interface IScriptRunner
 
     Task RunAsync(string scriptPath, IEnumerable<string>? args = null, TimeSpan? timeout = null);
     void Stop();
+
+    /// <summary>Envoie une ligne à l'entrée standard du programme en cours (input(), scanf, Scanner…).</summary>
+    void SendInput(string text);
 }

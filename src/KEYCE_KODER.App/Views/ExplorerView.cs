@@ -6,6 +6,7 @@ using System.Security;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Input;
 using Microsoft.Win32;
 
 namespace KEYCE_KODER.App.Views;
@@ -21,38 +22,49 @@ public class ExplorerView : DockPanel
         };
 
     public event Action<string>? FileOpenRequested;
+    public event Action<string>? CurrentPathChanged;
 
     private readonly TreeView _tree = new()
     {
         Background = Brushes.Transparent,
         BorderThickness = new Thickness(0),
-        Foreground = Brushes.White
+        Foreground = Theme.Text,
+        Padding = new Thickness(4, 2, 4, 4)
     };
 
     private string? _currentPath;
+
+    public string? CurrentPath => _currentPath;
 
     public ExplorerView()
     {
         var openButton = new Button
         {
             Content = "Ouvrir un dossier",
-            Padding = new Thickness(8, 4, 8, 4),
-            Margin = new Thickness(0, 0, 6, 0)
+            Padding = new Thickness(10, 7, 10, 7),
+            Margin = new Thickness(0, 0, 6, 0),
+            Foreground = Theme.Text,
+            Background = Theme.Surface,
+            BorderBrush = Theme.Border,
+            BorderThickness = new Thickness(1),
+            Cursor = Cursors.Hand
         };
 
         openButton.Click += (_, _) => ChooseFolder();
 
         var refreshButton = new Button
         {
-            Content = SvgIconFactory.Create("refresh", 18),
+            Content = SvgIconFactory.Create("refresh", 17),
             ToolTip = "Actualiser",
             Width = 32,
             Height = 32,
             Padding = new Thickness(0),
             Background = Brushes.Transparent,
+            Foreground = Theme.Muted,
             BorderThickness = new Thickness(0),
             HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalContentAlignment = VerticalAlignment.Center
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Cursor = Cursors.Hand
         };
 
         refreshButton.Click += (_, _) =>
@@ -63,7 +75,7 @@ public class ExplorerView : DockPanel
 
         var toolbar = new DockPanel
         {
-            Margin = new Thickness(10, 0, 10, 8)
+            Margin = new Thickness(10, 2, 10, 10)
         };
 
         DockPanel.SetDock(refreshButton, Dock.Right);
@@ -75,7 +87,7 @@ public class ExplorerView : DockPanel
         Children.Add(_tree);
     }
 
-    private void ChooseFolder()
+    public void ChooseFolder()
     {
         var dialog = new OpenFolderDialog
         {
@@ -94,13 +106,14 @@ public class ExplorerView : DockPanel
             VerticalAlignment = VerticalAlignment.Center
         };
 
-        panel.Children.Add(SvgIconFactory.Create(icon, 16));
+        panel.Children.Add(SvgIconFactory.Create(icon, 15));
 
         panel.Children.Add(new TextBlock
         {
             Text = text,
-            Foreground = Brushes.White,
-            Margin = new Thickness(7, 0, 0, 0),
+            Foreground = Theme.Text,
+            FontSize = 12,
+            Margin = new Thickness(7, 1, 0, 1),
             VerticalAlignment = VerticalAlignment.Center
         });
 
@@ -117,11 +130,11 @@ public class ExplorerView : DockPanel
                 "Explorateur",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
-
             return;
         }
 
         _currentPath = Path.GetFullPath(path);
+        CurrentPathChanged?.Invoke(_currentPath);
         _tree.Items.Clear();
 
         string folderName = Path.GetFileName(
@@ -135,6 +148,8 @@ public class ExplorerView : DockPanel
 
         _tree.Items.Add(root);
         root.IsExpanded = true;
+
+        CurrentPathChanged?.Invoke(_currentPath);
     }
 
     private TreeViewItem CreateNode(string path, bool isDirectory)
@@ -144,18 +159,14 @@ public class ExplorerView : DockPanel
             Header = CreateHeader(
                 Path.GetFileName(path),
                 isDirectory ? "folder" : "file"),
-
             Tag = path,
-            Foreground = Brushes.White
+            Foreground = Theme.Text,
+            Padding = new Thickness(2, 2, 4, 2)
         };
 
         if (isDirectory)
         {
-            node.Items.Add(new TreeViewItem
-            {
-                Tag = Placeholder
-            });
-
+            node.Items.Add(new TreeViewItem { Tag = Placeholder });
             node.Expanded += OnExpanded;
         }
         else
@@ -186,8 +197,7 @@ public class ExplorerView : DockPanel
 
         node.Items.Clear();
 
-        if (node.Tag is not string path ||
-            !Directory.Exists(path))
+        if (node.Tag is not string path || !Directory.Exists(path))
         {
             AddErrorNode(node, "(dossier introuvable)");
             return;
@@ -195,37 +205,22 @@ public class ExplorerView : DockPanel
 
         try
         {
-            var directories = Directory
-                .EnumerateDirectories(path)
+            var directories = Directory.EnumerateDirectories(path)
                 .Where(d => !Ignored.Contains(Path.GetFileName(d)))
-                .OrderBy(
-                    d => Path.GetFileName(d),
-                    StringComparer.OrdinalIgnoreCase);
+                .OrderBy(d => Path.GetFileName(d), StringComparer.OrdinalIgnoreCase);
 
             foreach (var directory in directories)
                 node.Items.Add(CreateNode(directory, true));
 
-            var files = Directory
-                .EnumerateFiles(path)
-                .OrderBy(
-                    f => Path.GetFileName(f),
-                    StringComparer.OrdinalIgnoreCase);
+            var files = Directory.EnumerateFiles(path)
+                .OrderBy(f => Path.GetFileName(f), StringComparer.OrdinalIgnoreCase);
 
             foreach (var file in files)
                 node.Items.Add(CreateNode(file, false));
         }
-        catch (UnauthorizedAccessException)
-        {
-            AddErrorNode(node, "(accès refusé)");
-        }
-        catch (SecurityException)
-        {
-            AddErrorNode(node, "(accès interdit)");
-        }
-        catch (IOException)
-        {
-            AddErrorNode(node, "(erreur de lecture)");
-        }
+        catch (UnauthorizedAccessException) { AddErrorNode(node, "(accès refusé)"); }
+        catch (SecurityException) { AddErrorNode(node, "(accès interdit)"); }
+        catch (IOException) { AddErrorNode(node, "(erreur de lecture)"); }
     }
 
     private static void AddErrorNode(TreeViewItem parent, string message)
@@ -233,7 +228,7 @@ public class ExplorerView : DockPanel
         parent.Items.Add(new TreeViewItem
         {
             Header = message,
-            Foreground = Brushes.Gray,
+            Foreground = Theme.Muted,
             IsEnabled = false
         });
     }

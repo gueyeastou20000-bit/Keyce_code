@@ -9,16 +9,16 @@ using KEYCE_KODER.Terminal;
 
 namespace KEYCE_KODER.App.Views;
 
-/// <summary>Panneau inférieur : onglet SORTIE (Run/Stop) et onglet TERMINAL (shell intégré).</summary>
+/// <summary>Panneau inférieur : sortie d'exécution et terminal intégré.</summary>
 public sealed class BottomPanel : Grid
 {
-    private static readonly Brush PanelBg = Frozen(30, 30, 30);
-    private static readonly Brush HeaderBg = Frozen(37, 37, 38);
-    private static readonly Brush Accent = Frozen(0, 122, 204);
-    private static readonly Brush Gray = Frozen(150, 150, 150);
-    private static readonly Brush White = Frozen(230, 230, 230);
-    private static readonly Brush Green = Frozen(115, 201, 145);
-    private static readonly Brush Red = Frozen(244, 135, 113);
+    private static readonly Brush PanelBg = Theme.Panel;
+    private static readonly Brush HeaderBg = Theme.PanelHeader;
+    private static readonly Brush Accent = Theme.Accent;
+    private static readonly Brush Gray = Theme.Muted;
+    private static readonly Brush White = Theme.Text;
+    private static readonly Brush Green = Theme.Green;
+    private static readonly Brush Red = Theme.Red;
 
     private static readonly ControlTemplate FlatTemplate = (ControlTemplate)XamlReader.Parse(
         """
@@ -33,7 +33,7 @@ public sealed class BottomPanel : Grid
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
-              <Setter TargetName="bd" Property="Background" Value="#33FFFFFF"/>
+              <Setter TargetName="bd" Property="Background" Value="#242A34"/>
             </Trigger>
             <Trigger Property="IsEnabled" Value="False">
               <Setter Property="Opacity" Value="0.4"/>
@@ -46,12 +46,18 @@ public sealed class BottomPanel : Grid
     private readonly TerminalSession _terminal;
     private readonly Func<Task<string?>> _prepareScript;
 
+    // Onglet SORTIE
+    private readonly Grid _outputHost = new();
     private readonly ConsoleView _output = new();
-    private readonly ConsoleView _termView = new();
-    private readonly Grid _terminalHost = new();
-    private readonly TextBox _input = new();
-    private readonly TextBlock _status = new();
+    private readonly Grid _programInputRow = new();
+    private readonly TextBox _programInput = new();
 
+    // Onglet TERMINAL
+    private readonly Grid _terminalHost = new();
+    private readonly ConsoleView _termView = new();
+    private readonly TextBox _input = new();
+
+    private readonly TextBlock _status = new();
     private readonly Button _tabOutput = MakeButton("SORTIE");
     private readonly Button _tabTerminal = MakeButton("TERMINAL");
     private readonly Button _restart = MakeButton("↻ Redémarrer");
@@ -70,11 +76,12 @@ public sealed class BottomPanel : Grid
         RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
         BuildHeader();
+        BuildOutputHost();
         BuildTerminalHost();
 
-        SetRow(_output, 1);
+        SetRow(_outputHost, 1);
         SetRow(_terminalHost, 1);
-        Children.Add(_output);
+        Children.Add(_outputHost);
         Children.Add(_terminalHost);
 
         _tabOutput.Click += (_, _) => ShowTab(terminal: false);
@@ -83,6 +90,7 @@ public sealed class BottomPanel : Grid
         _stop.Click += (_, _) => RequestStop();
         _restart.Click += (_, _) => { _termView.Clear(); _terminal.Restart(); };
         _input.PreviewKeyDown += OnInputKeyDown;
+        _programInput.PreviewKeyDown += OnProgramInputKeyDown;
 
         _runner.OutputReceived += (_, lines) => _output.Append(lines);
         _runner.StateChanged += (_, _) => UpdateState();
@@ -100,7 +108,7 @@ public sealed class BottomPanel : Grid
 
     public void RequestStop() => _runner.Stop();
 
-    // ───── Exécution du script ─────
+    // ───── Exécution du programme ─────
 
     private async Task RunAsync()
     {
@@ -131,6 +139,7 @@ public sealed class BottomPanel : Grid
         var running = _runner.State == RunState.Running;
         _run.IsEnabled = !running;
         _stop.IsEnabled = running;
+        _programInputRow.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
         if (running) _status.Text = "En cours…";
     }
 
@@ -144,6 +153,19 @@ public sealed class BottomPanel : Grid
             RunResult.TimedOut => $"Timeout · {secs} s",
             _ => "Échec du lancement",
         };
+    }
+
+    /// <summary>Entrée pour le programme en cours (input(), scanf, Scanner…).</summary>
+    private void OnProgramInputKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter) return;
+
+        e.Handled = true;
+        var text = _programInput.Text;
+        _programInput.Clear();
+
+        _output.Append(new[] { new OutputLine(OutputKind.Info, text + "\n") }); // écho de ce qui est envoyé
+        _runner.SendInput(text);
     }
 
     // ───── Terminal ─────
@@ -217,7 +239,7 @@ public sealed class BottomPanel : Grid
 
     private void ShowTab(bool terminal)
     {
-        _output.Visibility = terminal ? Visibility.Collapsed : Visibility.Visible;
+        _outputHost.Visibility = terminal ? Visibility.Collapsed : Visibility.Visible;
         _terminalHost.Visibility = terminal ? Visibility.Visible : Visibility.Collapsed;
         _restart.Visibility = terminal ? Visibility.Visible : Visibility.Collapsed;
 
@@ -239,7 +261,12 @@ public sealed class BottomPanel : Grid
 
     private void BuildHeader()
     {
-        var header = new Grid { Background = HeaderBg };
+        var header = new Grid
+        {
+            Background = HeaderBg
+        };
+        header.MinHeight = 38;
+
         for (var i = 0; i < 7; i++)
         {
             header.ColumnDefinitions.Add(new ColumnDefinition
@@ -264,19 +291,43 @@ public sealed class BottomPanel : Grid
         Children.Add(header);
     }
 
+    private void BuildOutputHost()
+    {
+        _outputHost.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        _outputHost.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        StyleInput(_programInput);
+        _programInput.ToolTip = "Texte envoyé au programme (input(), scanf, Scanner…). Entrée pour envoyer.";
+
+        var prompt = new TextBlock
+        {
+            Text = "Entrée du programme ›",
+            Foreground = Accent,
+            FontSize = 12,
+            Margin = new Thickness(10, 0, 6, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+
+        _programInputRow.Background = HeaderBg;
+        _programInputRow.Visibility = Visibility.Collapsed; // visible seulement pendant une exécution
+        _programInputRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        _programInputRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        SetColumn(_programInput, 1);
+        _programInputRow.Children.Add(prompt);
+        _programInputRow.Children.Add(_programInput);
+
+        SetRow(_output, 0);
+        SetRow(_programInputRow, 1);
+        _outputHost.Children.Add(_output);
+        _outputHost.Children.Add(_programInputRow);
+    }
+
     private void BuildTerminalHost()
     {
         _terminalHost.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         _terminalHost.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-        _input.Background = HeaderBg;
-        _input.Foreground = White;
-        _input.CaretBrush = White;
-        _input.BorderThickness = new Thickness(0);
-        _input.FontFamily = new FontFamily("Cascadia Mono, Consolas, Courier New");
-        _input.FontSize = 13;
-        _input.Padding = new Thickness(4, 6, 4, 6);
-        _input.VerticalContentAlignment = VerticalAlignment.Center;
+        StyleInput(_input);
 
         var prompt = new TextBlock
         {
@@ -298,6 +349,18 @@ public sealed class BottomPanel : Grid
         SetRow(inputRow, 1);
         _terminalHost.Children.Add(_termView);
         _terminalHost.Children.Add(inputRow);
+    }
+
+    private static void StyleInput(TextBox box)
+    {
+        box.Background = HeaderBg;
+        box.Foreground = White;
+        box.CaretBrush = White;
+        box.BorderThickness = new Thickness(0);
+        box.FontFamily = new FontFamily("Cascadia Mono, Consolas, Courier New");
+        box.FontSize = 13;
+        box.Padding = new Thickness(4, 6, 4, 6);
+        box.VerticalContentAlignment = VerticalAlignment.Center;
     }
 
     private static void Place(Grid grid, UIElement element, int column)

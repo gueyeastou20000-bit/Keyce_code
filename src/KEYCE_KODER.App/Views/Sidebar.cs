@@ -9,28 +9,30 @@ public class Sidebar : Border
 {
     private readonly TextBlock _title = new()
     {
-        Foreground = Brushes.White,
-        FontWeight = FontWeights.Bold,
-        Margin = new Thickness(10)
+        Foreground = Theme.Muted,
+        FontWeight = FontWeights.SemiBold,
+        FontSize = 11,
+        Margin = new Thickness(16, 16, 16, 10)
     };
 
     private readonly ContentControl _content = new();
     private readonly Dictionary<string, UIElement> _views = new();
 
     public ExplorerView Explorer { get; } = new();
+    public SearchView Search { get; } = new();
+    public WelcomeView Welcome { get; } = new();
+    public SettingsView Settings { get; } = new();
 
     public Sidebar()
     {
-        Width = 250;
-        Background = new SolidColorBrush(Color.FromRgb(37, 37, 38));
+        Width = 264;
+        Background = Theme.Sidebar;
+        BorderBrush = Theme.Border;
+        BorderThickness = new Thickness(0, 0, 1, 0);
 
-        _views["explorer"] = Explorer;
-        _views["search"] = new TextBlock
-        {
-            Text = "La recherche arrive bientôt...",
-            Foreground = Brushes.Gray,
-            Margin = new Thickness(10)
-        };
+        _views["search"] = Search;
+        _views["home"] = Welcome;
+        _views["settings"] = Settings;
 
         var dock = new DockPanel();
 
@@ -39,8 +41,7 @@ public class Sidebar : Border
         dock.Children.Add(_content);
 
         Child = dock;
-
-        ShowView("explorer");
+        ShowView("search");
     }
 
     public void ShowView(string id)
@@ -49,12 +50,17 @@ public class Sidebar : Border
         {
             "explorer" => "EXPLORATEUR",
             "search" => "RECHERCHE",
+            "home" => "ACCUEIL",
+            "settings" => "PARAMÈTRES",
             _ => id.ToUpperInvariant()
         };
 
         _content.Content = _views.TryGetValue(id, out var view)
             ? view
             : null;
+
+        if (id == "search")
+            Search.SetFolder(Explorer.CurrentPath);
     }
 
     public void Toggle()
