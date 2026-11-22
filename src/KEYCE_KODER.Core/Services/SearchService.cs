@@ -71,6 +71,19 @@ public class SearchService
         return BuildRegex(query, options).Matches(text).Count;
     }
 
+    public IReadOnlyList<SearchMatch> FindAll(string text, string query, SearchOptions options)
+    {
+        var results = new List<SearchMatch>();
+
+        if (string.IsNullOrEmpty(query))
+            return results;
+
+        foreach (Match match in BuildRegex(query, options).Matches(text))
+            results.Add(new SearchMatch(match.Index, match.Length));
+
+        return results;
+    }
+
     public bool IsExactMatch(string candidate, string query, SearchOptions options)
     {
         if (string.IsNullOrEmpty(query) || string.IsNullOrEmpty(candidate))
