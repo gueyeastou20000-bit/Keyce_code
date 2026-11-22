@@ -3,12 +3,14 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using ICSharpCode.AvalonEdit;
 using KEYCE_KODER.Editor.Highlighting;
+using KEYCE_KODER.Editor.Folding;
 
 namespace KEYCE_KODER.Editor.Controls;
 
 public class CodeEditor : UserControl
 {
     private readonly TextEditor _editor;
+    private readonly CodeFoldingController _foldingController;
 
     public event EventHandler? TextChanged;
 
@@ -30,6 +32,8 @@ public class CodeEditor : UserControl
             )
         };
 
+        _foldingController = new CodeFoldingController(_editor);
+
         _editor.TextChanged += (_, _) =>
         {
             TextChanged?.Invoke(this, EventArgs.Empty);
@@ -37,9 +41,10 @@ public class CodeEditor : UserControl
 
         Content = _editor;
     }
+
     /// <summary>
     /// Accès à l'éditeur AvalonEdit interne.
-    /// Utilisé par EditorActions (menu Édition, recherche/remplacement).
+    /// Utilisé par EditorActions.
     /// </summary>
     public TextEditor InnerEditor => _editor;
 
@@ -53,5 +58,17 @@ public class CodeEditor : UserControl
     {
         _editor.SyntaxHighlighting =
             LanguageHighlighter.GetDefinition(filePath);
+
+        _foldingController.SetLanguage(filePath);
+    }
+
+    public void FoldAll()
+    {
+        _foldingController.FoldAll();
+    }
+
+    public void UnfoldAll()
+    {
+        _foldingController.UnfoldAll();
     }
 }
