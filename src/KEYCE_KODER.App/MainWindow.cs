@@ -17,6 +17,9 @@ using KEYCE_KODER.Editor.Controls;
 using KEYCE_KODER.Editor.Services;
 using KEYCE_KODER.Runner;
 using KEYCE_KODER.Terminal;
+using System.ComponentModel;
+using KEYCE_KODER.App.Actions;
+using KEYCE_KODER.App.Services;
 
 using KEYCE_KODER.App.Tabs;
 
@@ -28,6 +31,8 @@ public class MainWindow : Window
     // Onglets d'édition : un onglet par fichier ouvert
     private readonly TabControl _tabControl;
     private readonly TabManager _tabManager;
+    private readonly FileActions _fileActions;
+    private bool _closeConfirmed;
     private readonly DocumentManager _documentManager;
     private readonly FileService _fileService;
     private readonly DocumentService _documentService;
@@ -72,13 +77,12 @@ public class MainWindow : Window
         };
         _tabManager = new TabManager(_tabControl);
 
-        // Fermeture d'un onglet (× ou clic molette).
-        // Version simple pour l'instant : la question « Enregistrer ? » arrive à l'étape 12.
-        _tabManager.CloseRequested += (_, tab) =>
-        {
-            _tabManager.Remove(tab);
-            _documentManager.CloseDocument(tab.Document.Id);
-        };
+        // Actions du menu Fichier (nouveau, ouvrir, enregistrer, fermer...)
+        _fileActions = new FileActions(
+            _documentService,
+            _documentManager,
+            _tabManager,
+            new WpfDialogService(this));
 
         // Document Python de démonstration, ouvert dans le premier onglet
         var demo = _documentService.CreateDocument();
@@ -112,7 +116,7 @@ public class MainWindow : Window
 
         // Ouverture des fichiers depuis l'Explorateur
         sidebar.Explorer.FileOpenRequested +=
-            path => _ = OpenFileAsync(path);
+    path => _ = _fileActions.OpenPathAsync(path);
 
         // Mise en page : Activity Bar | Sidebar | (Éditeur / Panneau inférieur)
         var grid = new Grid();
@@ -193,12 +197,17 @@ public class MainWindow : Window
             Key.F5,
             ModifierKeys.Shift));
 
+        // Raccourcis du menu Fichier et des onglets
+        AddShortcut(_fileActions.NewFile, Key.N, ModifierKeys.Control);
+        AddShortcut(async () => await _fileActions.OpenAsync(), Key.O, ModifierKeys.Control);
+        AddShortcut(async () => await _fileActions.SaveAsync(), Key.S, ModifierKeys.Control);
+        AddShortcut(async () => await _fileActions.SaveAsAsync(), Key.S, ModifierKeys.Control | ModifierKeys.Shift);
+        AddShortcut(async () => await _fileActions.CloseActiveAsync(), Key.W, ModifierKeys.Control);
+        AddShortcut(_tabManager.ActivateNext, Key.Tab, ModifierKeys.Control);
+        AddShortcut(_tabManager.ActivatePrevious, Key.Tab, ModifierKeys.Control | ModifierKeys.Shift);
+
         // Fermeture propre : plus aucun processus Python ou shell orphelin
-        Closing += (_, _) =>
-        {
-            _runner.Stop();
-            _terminal.Dispose();
-        };
+        Closing += OnWindowClosing;
     }
 
     /// <summary>Enregistre le fichier actif si nécessaire et renvoie le chemin à exécuter.</summary>
@@ -252,28 +261,30 @@ public class MainWindow : Window
         return path;
     }
 
-    private async Task OpenFileAsync(string path)
+    private void AddShortcut(Action action, Key key, ModifierKeys modifiers)
     {
-        // Fichier déjà ouvert : on active simplement son onglet
-        var existing = _tabManager.FindByPath(path);
-        if (existing != null)
+        InputBindings.Add(new KeyBinding(new RelayCommand(action), key, modifiers));
+    }
+
+    private async void OnWindowClosing(object? sender, CancelEventArgs e)
+    {
+        if (!_closeConfirmed)
         {
-            _tabManager.Activate(existing);
+            // On bloque la fermeture le temps de demander « Enregistrer ? »
+            e.Cancel = true;
+
+            if (!await _fileActions.ConfirmCloseAllAsync())
+                return; // l'utilisateur a annulé : on reste ouvert
+
+            _closeConfirmed = true;
+
+            // Close() est interdit pendant l'événement Closing : on le reporte
+            _ = Dispatcher.BeginInvoke(new Action(Close));
             return;
         }
 
-        try
-        {
-            var document = await _documentService.OpenDocumentAsync(path);
-            _tabManager.Open(document);
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show(
-                $"Impossible d'ouvrir le fichier :\n{ex.Message}",
-                "Erreur d'ouverture",
-                MessageBoxButton.OK,
-                MessageBoxImage.Error);
-        }
+        // Fermeture confirmée : plus aucun processus Python ou shell orphelin
+        _runner.Stop();
+        _terminal.Dispose();
     }
 }
