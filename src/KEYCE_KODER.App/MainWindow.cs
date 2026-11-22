@@ -20,7 +20,8 @@ using KEYCE_KODER.Terminal;
 using System.ComponentModel;
 using KEYCE_KODER.App.Actions;
 using KEYCE_KODER.App.Services;
-
+using KEYCE_KODER.App.Menus;
+using KEYCE_KODER.App.Status;
 using KEYCE_KODER.App.Tabs;
 
 namespace KEYCE_KODER.App;
@@ -32,6 +33,9 @@ public class MainWindow : Window
     private readonly TabControl _tabControl;
     private readonly TabManager _tabManager;
     private readonly FileActions _fileActions;
+    private readonly EditActions _editActions;
+    private readonly MainMenu _mainMenu;
+    private readonly EditorStatusBar _statusBar;
     private bool _closeConfirmed;
     private readonly DocumentManager _documentManager;
     private readonly FileService _fileService;
@@ -83,7 +87,14 @@ public class MainWindow : Window
             _documentManager,
             _tabManager,
             new WpfDialogService(this));
+        // Menu Édition, barre de menus et barre d'état
+        _editActions = new EditActions(_tabManager);
+        _mainMenu = new MainMenu(_fileActions, _editActions, this);
+        _statusBar = new EditorStatusBar();
 
+        // Titre et barre d'état toujours à jour
+        _tabManager.ActiveTabChanged += (_, _) => UpdateWindowState();
+        _tabManager.ActiveEditorStateChanged += (_, _) => UpdateWindowState();
         // Document Python de démonstration, ouvert dans le premier onglet
         var demo = _documentService.CreateDocument();
         demo.Content =
@@ -178,7 +189,18 @@ public class MainWindow : Window
         grid.Children.Add(sidebar);
         grid.Children.Add(editorArea);
 
-        Content = grid;
+        // Menu en haut, barre d'état en bas, le reste (explorateur, onglets, panneau) au centre
+        var root = new DockPanel();
+
+        DockPanel.SetDock(_mainMenu, Dock.Top);
+        root.Children.Add(_mainMenu);
+
+        DockPanel.SetDock(_statusBar, Dock.Bottom);
+        root.Children.Add(_statusBar);
+
+        root.Children.Add(grid); // le dernier élément prend toute la place restante
+
+        Content = root;
 
         // Raccourci Ctrl+B : afficher ou masquer la Sidebar
         InputBindings.Add(new KeyBinding(
@@ -196,6 +218,8 @@ public class MainWindow : Window
             new RelayCommand(_bottomPanel.RequestStop),
             Key.F5,
             ModifierKeys.Shift));
+
+
 
         // Raccourcis du menu Fichier et des onglets
         AddShortcut(_fileActions.NewFile, Key.N, ModifierKeys.Control);
@@ -260,7 +284,16 @@ public class MainWindow : Window
 
         return path;
     }
+    private void UpdateWindowState()
+    {
+        EditorTab? tab = _tabManager.ActiveTab;
 
+        Title = tab is null
+            ? "KEYCE KODER"
+            : $"{(tab.Document.IsDirty ? "● " : "")}{tab.Document.Name} — KEYCE KODER";
+
+        _statusBar.Update(tab);
+    }
     private void AddShortcut(Action action, Key key, ModifierKeys modifiers)
     {
         InputBindings.Add(new KeyBinding(new RelayCommand(action), key, modifiers));
