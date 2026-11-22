@@ -24,6 +24,8 @@ using KEYCE_KODER.App.Menus;
 using KEYCE_KODER.App.Status;
 using KEYCE_KODER.App.Tabs;
 using KEYCE_KODER.App.Search;
+using KEYCE_KODER.App.Themes;
+
 
 namespace KEYCE_KODER.App;
 
@@ -63,8 +65,8 @@ public class MainWindow : Window
         MinHeight = 600;
 
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        Background = new SolidColorBrush(Color.FromRgb(30, 30, 30));
-        Foreground = Brushes.White;
+        Background = ThemeColors.Background;
+Foreground = ThemeColors.TextPrimary;
 
         // Initialisation des services Core
         _documentManager = new DocumentManager();
@@ -77,7 +79,7 @@ public class MainWindow : Window
         // Onglets d'édition : un onglet par fichier ouvert
         _tabControl = new TabControl
         {
-            Background = new SolidColorBrush(Color.FromRgb(30, 30, 30)),
+            Background = ThemeColors.Background,
             BorderThickness = new Thickness(0),
             Padding = new Thickness(0)
         };

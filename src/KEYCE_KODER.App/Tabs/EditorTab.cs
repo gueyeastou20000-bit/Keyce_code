@@ -1,7 +1,9 @@
-﻿using System.Windows;
+﻿using System;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using KEYCE_KODER.App.Themes;
 using KEYCE_KODER.Core.Interfaces;
 using KEYCE_KODER.Core.Models;
 using KEYCE_KODER.Editor.Controls;
@@ -12,24 +14,19 @@ namespace KEYCE_KODER.App.Tabs;
 public sealed class EditorTab
 {
     private readonly TextBlock _title;
+    private readonly Button _closeButton;
 
     public Document Document { get; }
-
     public CodeEditor Editor { get; }
-
     public IEditorService EditorService { get; }
-
     public IEditorActions Actions { get; }
-
     public TabItem TabItem { get; }
 
     public event EventHandler? CloseRequested;
-
     public event EventHandler? StateChanged;
 
     public EditorTab(Document document)
     {
-        // 1. Le document et son éditeur
         Document = document;
 
         Editor = new CodeEditor();
@@ -37,36 +34,46 @@ public sealed class EditorTab
         EditorService.SetDocument(document);
         Actions = new EditorActions(Editor);
 
-        // 2. L'en-tête : nom du fichier + bouton ×
         _title = new TextBlock
         {
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 6, 0)
+            Margin = new Thickness(0, 0, 8, 0),
+            Foreground = ThemeColors.TextSecondary,
+            FontSize = 12
         };
 
-        var closeButton = new Button
+        _closeButton = new Button
         {
             Content = "×",
-            FontSize = 13,
-            Padding = new Thickness(4, 0, 4, 0),
+            FontSize = 16,
+            Padding = new Thickness(5, 0, 5, 0),
             BorderThickness = new Thickness(0),
             Background = Brushes.Transparent,
+            Foreground = ThemeColors.TextSecondary,
             Cursor = Cursors.Hand,
             Focusable = false,
             ToolTip = "Fermer (Ctrl+W)",
             VerticalAlignment = VerticalAlignment.Center
         };
-        closeButton.Click += (_, _) => CloseRequested?.Invoke(this, EventArgs.Empty);
+
+        _closeButton.MouseEnter += (_, _) =>
+            _closeButton.Foreground = ThemeColors.TextPrimary;
+
+        _closeButton.MouseLeave += (_, _) =>
+            _closeButton.Foreground = ThemeColors.TextSecondary;
+
+        _closeButton.Click += (_, _) =>
+            CloseRequested?.Invoke(this, EventArgs.Empty);
 
         var header = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             Background = Brushes.Transparent
         };
-        header.Children.Add(_title);
-        header.Children.Add(closeButton);
 
-        // 3. Clic molette sur l'en-tête = fermer
+        header.Children.Add(_title);
+        header.Children.Add(_closeButton);
+
         header.PreviewMouseDown += (_, e) =>
         {
             if (e.ChangedButton == MouseButton.Middle)
@@ -76,15 +83,17 @@ public sealed class EditorTab
             }
         };
 
-        // 4. L'onglet lui-même
         TabItem = new TabItem
         {
             Header = header,
             Content = Editor,
-            Tag = this
+            Tag = this,
+            Background = ThemeColors.TabBackground,
+            Foreground = ThemeColors.TextPrimary,
+            BorderBrush = ThemeColors.Border,
+            Padding = new Thickness(12, 7, 12, 7)
         };
 
-        // 5. À chaque frappe, on met à jour l'en-tête (indicateur ●)
         Editor.TextChanged += (_, _) => RefreshHeader();
 
         RefreshHeader();
@@ -92,8 +101,16 @@ public sealed class EditorTab
 
     public void RefreshHeader()
     {
-        _title.Text = Document.IsDirty ? $"{Document.Name} ●" : Document.Name;
+        _title.Text = Document.IsDirty
+            ? $"{Document.Name} ●"
+            : Document.Name;
+
+        _title.Foreground = Document.IsDirty
+            ? ThemeColors.Accent
+            : ThemeColors.TextSecondary;
+
         TabItem.ToolTip = Document.FilePath ?? "Fichier non enregistré";
+
         StateChanged?.Invoke(this, EventArgs.Empty);
     }
 }

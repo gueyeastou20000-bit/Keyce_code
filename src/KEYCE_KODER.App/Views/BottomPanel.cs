@@ -6,19 +6,21 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using KEYCE_KODER.Core.Execution;
 using KEYCE_KODER.Terminal;
+using KEYCE_KODER.App.Themes;
+
 
 namespace KEYCE_KODER.App.Views;
 
 /// <summary>Panneau inférieur : onglet SORTIE (Run/Stop) et onglet TERMINAL (shell intégré).</summary>
 public sealed class BottomPanel : Grid
 {
-    private static readonly Brush PanelBg = Frozen(30, 30, 30);
-    private static readonly Brush HeaderBg = Frozen(37, 37, 38);
-    private static readonly Brush Accent = Frozen(0, 122, 204);
-    private static readonly Brush Gray = Frozen(150, 150, 150);
-    private static readonly Brush White = Frozen(230, 230, 230);
-    private static readonly Brush Green = Frozen(115, 201, 145);
-    private static readonly Brush Red = Frozen(244, 135, 113);
+   private static readonly Brush PanelBg = ThemeColors.Background;
+private static readonly Brush HeaderBg = ThemeColors.Sidebar;
+private static readonly Brush Accent = ThemeColors.Accent;
+private static readonly Brush Gray = ThemeColors.TextSecondary;
+private static readonly Brush White = ThemeColors.TextPrimary;
+private static readonly Brush Green = ThemeColors.Success;
+private static readonly Brush Red = ThemeColors.Error;
 
     private static readonly ControlTemplate FlatTemplate = (ControlTemplate)XamlReader.Parse(
         """

@@ -16,7 +16,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="Assets\logo.png" CopyToOutputDirectory="PreserveNewest" />
+    <Resource Include="Assets\logo.png" />
     <Resource Include="Assets\app.ico" />
     <Resource Include="Assets\Icons\*.svg" />
   </ItemGroup>
