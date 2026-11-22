@@ -4,8 +4,10 @@ using System.Windows.Input;
 using System.Windows.Markup;
 using System.Windows.Media;
 using System.Windows.Threading;
+using System.IO;
 using KEYCE_KODER.Core.Execution;
 using KEYCE_KODER.Terminal;
+
 
 namespace KEYCE_KODER.App.Views;
 
@@ -45,6 +47,7 @@ public sealed class BottomPanel : Grid
     private readonly IScriptRunner _runner;
     private readonly TerminalSession _terminal;
     private readonly Func<Task<string?>> _prepareScript;
+    private readonly Func<string?> _getTerminalWorkingDirectory;
 
     private readonly ConsoleView _output = new();
     private readonly ConsoleView _termView = new();
@@ -59,11 +62,16 @@ public sealed class BottomPanel : Grid
     private readonly Button _stop = MakeButton("■ Stop", Red);
 
     /// <param name="prepareScript">Sauvegarde le fichier actif et renvoie son chemin (null = annuler).</param>
-    public BottomPanel(IScriptRunner runner, TerminalSession terminal, Func<Task<string?>> prepareScript)
+    public BottomPanel(
+        IScriptRunner runner,
+        TerminalSession terminal,
+        Func<Task<string?>> prepareScript,
+        Func<string?> getTerminalWorkingDirectory)
     {
         _runner = runner;
         _terminal = terminal;
         _prepareScript = prepareScript;
+        _getTerminalWorkingDirectory = getTerminalWorkingDirectory;
 
         Background = PanelBg;
         RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -81,7 +89,14 @@ public sealed class BottomPanel : Grid
         _tabTerminal.Click += (_, _) => ShowTab(terminal: true);
         _run.Click += (_, _) => RequestRun();
         _stop.Click += (_, _) => RequestStop();
-        _restart.Click += (_, _) => { _termView.Clear(); _terminal.Restart(); };
+
+        _restart.Click += (_, _) =>
+        {
+            _termView.Clear();
+            UpdateTerminalWorkingDirectory();
+            _terminal.Restart();
+        };
+        
         _input.PreviewKeyDown += OnInputKeyDown;
 
         _runner.OutputReceived += (_, lines) => _output.Append(lines);
@@ -153,12 +168,27 @@ public sealed class BottomPanel : Grid
         if (_terminal.IsRunning) return;
         try
         {
+            UpdateTerminalWorkingDirectory();
             _terminal.Start();
         }
         catch (Exception ex)
         {
             _termView.Append(new[] { new OutputLine(OutputKind.StdErr, $"Impossible de démarrer le terminal : {ex.Message}\n") });
         }
+    }
+
+    private void UpdateTerminalWorkingDirectory()
+    {
+        string? projectFolder = _getTerminalWorkingDirectory();
+
+        string userFolder = Environment.GetFolderPath(
+            Environment.SpecialFolder.UserProfile);
+
+        _terminal.WorkingDirectory =
+            !string.IsNullOrWhiteSpace(projectFolder) &&
+            Directory.Exists(projectFolder)
+                ? Path.GetFullPath(projectFolder)
+                : userFolder;
     }
 
     private void OnTerminalExited(object? sender, int exitCode)
@@ -198,7 +228,12 @@ public sealed class BottomPanel : Grid
     {
         try
         {
-            if (!_terminal.IsRunning) _terminal.Start();
+            if (!_terminal.IsRunning)
+            {
+                UpdateTerminalWorkingDirectory();
+                _terminal.Start();
+            }
+
             await _terminal.SendCommandAsync(command);
         }
         catch (Exception ex)

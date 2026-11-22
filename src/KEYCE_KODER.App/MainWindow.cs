@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
@@ -128,11 +128,17 @@ public class MainWindow : Window
         {
             UiContext = uiContext
         };
-        _bottomPanel = new BottomPanel(_runner, _terminal, PrepareScriptAsync);
+        
 
         // Création des panneaux de navigation
         var activityBar = new ActivityBar();
         var sidebar = new Sidebar();
+
+        _bottomPanel = new BottomPanel(
+            _runner,
+            _terminal,
+            PrepareScriptAsync,
+            () => sidebar.Explorer.CurrentFolder);
 
         // Navigation entre les vues
         activityBar.ViewSelected += sidebar.ShowView;
