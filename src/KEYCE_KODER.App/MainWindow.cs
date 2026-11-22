@@ -18,23 +18,27 @@ using KEYCE_KODER.Editor.Services;
 using KEYCE_KODER.Runner;
 using KEYCE_KODER.Terminal;
 
+using KEYCE_KODER.App.Tabs;
+
 namespace KEYCE_KODER.App;
 
 public class MainWindow : Window
 {
-    private readonly CodeEditor _codeEditor;
 
+    // Onglets d'édition : un onglet par fichier ouvert
+    private readonly TabControl _tabControl;
+    private readonly TabManager _tabManager;
     private readonly DocumentManager _documentManager;
     private readonly FileService _fileService;
     private readonly DocumentService _documentService;
-    private readonly EditorService _editorService;
+   
 
     // Exécution : Runner Python + terminal intégré + panneau inférieur
     private readonly PythonRunner _runner;
     private readonly TerminalSession _terminal;
     private readonly BottomPanel _bottomPanel;
 
-    private readonly Document _currentDocument;
+   
 
     public MainWindow()
     {
@@ -59,20 +63,33 @@ public class MainWindow : Window
             _documentManager,
             _fileService);
 
-        // Initialisation de l'éditeur
-        _codeEditor = new CodeEditor();
-        _editorService = new EditorService(_codeEditor);
+        // Onglets d'édition : un onglet par fichier ouvert
+        _tabControl = new TabControl
+        {
+            Background = new SolidColorBrush(Color.FromRgb(30, 30, 30)),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(0)
+        };
+        _tabManager = new TabManager(_tabControl);
 
-        // Document Python de démonstration
-        _currentDocument = _documentService.CreateDocument();
+        // Fermeture d'un onglet (× ou clic molette).
+        // Version simple pour l'instant : la question « Enregistrer ? » arrive à l'étape 12.
+        _tabManager.CloseRequested += (_, tab) =>
+        {
+            _tabManager.Remove(tab);
+            _documentManager.CloseDocument(tab.Document.Id);
+        };
 
-        _currentDocument.Content =
+        // Document Python de démonstration, ouvert dans le premier onglet
+        var demo = _documentService.CreateDocument();
+        demo.Content =
             "def saluer(nom):\n" +
             "    print(f\"Bonjour {nom} !\")\n\n" +
             "saluer(\"KEYCE KODER\")";
+        demo.MarkSaved(); // la démo n'est pas considérée comme « modifiée »
 
-        _editorService.SetDocument(_currentDocument);
-        _editorService.SetLanguage("main.py");
+        var demoTab = _tabManager.Open(demo);
+        demoTab.EditorService.SetLanguage("main.py");
 
         // Exécution (créés ici, sur le thread UI : les événements reviennent sur ce thread)
         var uiContext = new DispatcherSynchronizationContext(Dispatcher);
@@ -141,11 +158,11 @@ public class MainWindow : Window
             Background = new SolidColorBrush(Color.FromRgb(60, 60, 60))
         };
 
-        Grid.SetRow(_codeEditor, 0);
+        Grid.SetRow(_tabControl, 0);
         Grid.SetRow(splitter, 1);
         Grid.SetRow(_bottomPanel, 2);
 
-        editorArea.Children.Add(_codeEditor);
+        editorArea.Children.Add(_tabControl);
         editorArea.Children.Add(splitter);
         editorArea.Children.Add(_bottomPanel);
 
@@ -187,8 +204,20 @@ public class MainWindow : Window
     /// <summary>Enregistre le fichier actif si nécessaire et renvoie le chemin à exécuter.</summary>
     private async Task<string?> PrepareScriptAsync()
     {
-        var path = _editorService.FilePath;
-        var text = _editorService.Text;
+        var tab = _tabManager.ActiveTab;
+        if (tab is null)
+        {
+            MessageBox.Show(
+                "Aucun fichier ouvert à exécuter.",
+                "KEYCE KODER",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return null;
+        }
+
+        var editorService = tab.EditorService;
+        var path = editorService.FilePath;
+        var text = editorService.Text;
         var utf8 = new UTF8Encoding(false);
 
         // Document sans fichier (démo ou nouveau) : copie temporaire
@@ -213,10 +242,11 @@ public class MainWindow : Window
         }
 
         // Sauvegarde avant exécution
-        if (_editorService.IsModified)
+        if (editorService.IsModified)
         {
             await File.WriteAllTextAsync(path, text, utf8);
-            _editorService.MarkSaved(path);
+            editorService.MarkSaved(path);
+            tab.RefreshHeader(); // le ● disparaît de l'onglet
         }
 
         return path;
@@ -224,11 +254,18 @@ public class MainWindow : Window
 
     private async Task OpenFileAsync(string path)
     {
+        // Fichier déjà ouvert : on active simplement son onglet
+        var existing = _tabManager.FindByPath(path);
+        if (existing != null)
+        {
+            _tabManager.Activate(existing);
+            return;
+        }
+
         try
         {
             var document = await _documentService.OpenDocumentAsync(path);
-
-            _editorService.SetDocument(document);
+            _tabManager.Open(document);
         }
         catch (Exception ex)
         {
