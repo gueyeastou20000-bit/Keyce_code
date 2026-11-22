@@ -20,8 +20,10 @@ using KEYCE_KODER.Terminal;
 using System.ComponentModel;
 using KEYCE_KODER.App.Actions;
 using KEYCE_KODER.App.Services;
-
+using KEYCE_KODER.App.Menus;
+using KEYCE_KODER.App.Status;
 using KEYCE_KODER.App.Tabs;
+using KEYCE_KODER.App.Search;
 
 namespace KEYCE_KODER.App;
 
@@ -32,6 +34,10 @@ public class MainWindow : Window
     private readonly TabControl _tabControl;
     private readonly TabManager _tabManager;
     private readonly FileActions _fileActions;
+    private readonly EditActions _editActions;
+    private readonly MainMenu _mainMenu;
+    private readonly EditorStatusBar _statusBar;
+    private FindReplaceWindow? _findReplaceWindow;
     private bool _closeConfirmed;
     private readonly DocumentManager _documentManager;
     private readonly FileService _fileService;
@@ -83,7 +89,24 @@ public class MainWindow : Window
             _documentManager,
             _tabManager,
             new WpfDialogService(this));
+        // Menu Édition, barre de menus et barre d'état
+        _editActions = new EditActions(_tabManager);
+        _mainMenu = new MainMenu(_fileActions, _editActions, this);
+        // Recherche / remplacement dans le menu Édition
+        _mainMenu.EditMenu.Items.Add(new Separator());
+        _mainMenu.EditMenu.Items.Add(_mainMenu.Item("Rec_hercher…", "Ctrl+F",
+            () => ShowFind(replaceMode: false), () => _editActions.HasEditor));
+        _mainMenu.EditMenu.Items.Add(_mainMenu.Item("Rechercher su_ivant", "F3",
+            FindNext, () => _editActions.HasEditor));
+        _mainMenu.EditMenu.Items.Add(_mainMenu.Item("Rechercher _précédent", "Maj+F3",
+            FindPrevious, () => _editActions.HasEditor));
+        _mainMenu.EditMenu.Items.Add(_mainMenu.Item("Re_mplacer…", "Ctrl+H",
+            () => ShowFind(replaceMode: true), () => _editActions.HasEditor));
+        _statusBar = new EditorStatusBar();
 
+        // Titre et barre d'état toujours à jour
+        _tabManager.ActiveTabChanged += (_, _) => UpdateWindowState();
+        _tabManager.ActiveEditorStateChanged += (_, _) => UpdateWindowState();
         // Document Python de démonstration, ouvert dans le premier onglet
         var demo = _documentService.CreateDocument();
         demo.Content =
@@ -178,7 +201,18 @@ public class MainWindow : Window
         grid.Children.Add(sidebar);
         grid.Children.Add(editorArea);
 
-        Content = grid;
+        // Menu en haut, barre d'état en bas, le reste (explorateur, onglets, panneau) au centre
+        var root = new DockPanel();
+
+        DockPanel.SetDock(_mainMenu, Dock.Top);
+        root.Children.Add(_mainMenu);
+
+        DockPanel.SetDock(_statusBar, Dock.Bottom);
+        root.Children.Add(_statusBar);
+
+        root.Children.Add(grid); // le dernier élément prend toute la place restante
+
+        Content = root;
 
         // Raccourci Ctrl+B : afficher ou masquer la Sidebar
         InputBindings.Add(new KeyBinding(
@@ -197,6 +231,8 @@ public class MainWindow : Window
             Key.F5,
             ModifierKeys.Shift));
 
+
+
         // Raccourcis du menu Fichier et des onglets
         AddShortcut(_fileActions.NewFile, Key.N, ModifierKeys.Control);
         AddShortcut(async () => await _fileActions.OpenAsync(), Key.O, ModifierKeys.Control);
@@ -205,6 +241,10 @@ public class MainWindow : Window
         AddShortcut(async () => await _fileActions.CloseActiveAsync(), Key.W, ModifierKeys.Control);
         AddShortcut(_tabManager.ActivateNext, Key.Tab, ModifierKeys.Control);
         AddShortcut(_tabManager.ActivatePrevious, Key.Tab, ModifierKeys.Control | ModifierKeys.Shift);
+        AddShortcut(() => ShowFind(replaceMode: false), Key.F, ModifierKeys.Control);
+        AddShortcut(() => ShowFind(replaceMode: true), Key.H, ModifierKeys.Control);
+        AddShortcut(FindNext, Key.F3, ModifierKeys.None);
+        AddShortcut(FindPrevious, Key.F3, ModifierKeys.Shift);
 
         // Fermeture propre : plus aucun processus Python ou shell orphelin
         Closing += OnWindowClosing;
@@ -260,7 +300,41 @@ public class MainWindow : Window
 
         return path;
     }
+    private void UpdateWindowState()
+    {
+        EditorTab? tab = _tabManager.ActiveTab;
 
+        Title = tab is null
+            ? "KEYCE KODER"
+            : $"{(tab.Document.IsDirty ? "● " : "")}{tab.Document.Name} — KEYCE KODER";
+
+        _statusBar.Update(tab);
+    }
+
+    // La fenêtre de recherche est créée à la première utilisation :
+    // WPF exige que la fenêtre principale soit déjà affichée pour en être « propriétaire ».
+    private FindReplaceWindow GetFindReplaceWindow()
+    {
+        return _findReplaceWindow ??= new FindReplaceWindow(this, () => _tabManager.ActiveTab?.Actions);
+    }
+
+    private void ShowFind(bool replaceMode)
+    {
+        GetFindReplaceWindow().ShowFor(replaceMode);
+    }
+
+    // F3 / Maj+F3 : si rien n'a encore été cherché, on ouvre la fenêtre de recherche
+    private void FindNext()
+    {
+        FindReplaceWindow find = GetFindReplaceWindow();
+        if (find.Query.Length == 0) find.ShowFor(replaceMode: false); else find.FindNext();
+    }
+
+    private void FindPrevious()
+    {
+        FindReplaceWindow find = GetFindReplaceWindow();
+        if (find.Query.Length == 0) find.ShowFor(replaceMode: false); else find.FindPrevious();
+    }
     private void AddShortcut(Action action, Key key, ModifierKeys modifiers)
     {
         InputBindings.Add(new KeyBinding(new RelayCommand(action), key, modifiers));
@@ -278,6 +352,8 @@ public class MainWindow : Window
 
             _closeConfirmed = true;
 
+            if (_findReplaceWindow != null)
+                _findReplaceWindow.AllowClose = true;
             // Close() est interdit pendant l'événement Closing : on le reporte
             _ = Dispatcher.BeginInvoke(new Action(Close));
             return;
