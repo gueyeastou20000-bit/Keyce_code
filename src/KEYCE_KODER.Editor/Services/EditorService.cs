@@ -9,6 +9,7 @@ public class EditorService : IEditorService
 {
     private readonly CodeEditor _editor;
     private Document? _currentDocument;
+    private bool _isLoadingDocument;
 
     public EditorService(CodeEditor editor)
     {
@@ -16,7 +17,7 @@ public class EditorService : IEditorService
 
         _editor.TextChanged += (_, _) =>
         {
-            if (_currentDocument != null)
+            if (!_isLoadingDocument && _currentDocument != null)
                 _currentDocument.Content = _editor.Text;
         };
     }
@@ -49,10 +50,18 @@ public class EditorService : IEditorService
 
     public void SetDocument(Document document)
     {
+        _isLoadingDocument = true;
+
+        try
+        {
+            _editor.Text = document.Content;
+        }
+        finally
+        {
+            _isLoadingDocument = false;
+        }
+
         _currentDocument = document;
-
-        _editor.Text = document.Content;
-
         _editor.SetLanguage(document.FilePath);
     }
 
