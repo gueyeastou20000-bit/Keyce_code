@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 
@@ -32,7 +32,10 @@ public static class FoldingDetectionService
             ".py" =>
                 PythonFoldingDetector.Detect(text),
 
-            ".html" or ".htm" or ".xml" or ".xaml" =>
+            ".html" or ".htm" =>
+                HtmlFoldingDetector.Detect(text),
+
+            ".xml" or ".xaml" =>
                 XmlFoldingDetector.Detect(text),
 
             _ =>
