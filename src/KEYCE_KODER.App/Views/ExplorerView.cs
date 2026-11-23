@@ -36,6 +36,9 @@ public class ExplorerView : DockPanel
 
     public string? CurrentPath => _currentPath;
 
+    /// <summary>Dossier actuellement ouvert dans l'explorateur (null si aucun).</summary>
+    public string? CurrentFolder => _currentPath;
+
     public ExplorerView()
     {
         var openButton = new Button

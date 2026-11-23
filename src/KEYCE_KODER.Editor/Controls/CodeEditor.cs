@@ -1,16 +1,18 @@
-using System;
+﻿using System;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using ICSharpCode.AvalonEdit;
 using KEYCE_KODER.Editor.Highlighting;
+using KEYCE_KODER.Editor.Folding;
 
 namespace KEYCE_KODER.Editor.Controls;
 
 public class CodeEditor : UserControl
 {
     private readonly TextEditor _editor;
+    private readonly CodeFoldingController _foldingController;
     private readonly TextBlock _minimap = new();
 
     public event EventHandler? TextChanged;
@@ -39,14 +41,20 @@ public class CodeEditor : UserControl
             LineNumbersForeground = new SolidColorBrush(Color.FromRgb(99, 108, 126))
         };
 
+        // Initialisation du système de Code Folding
+        _foldingController = new CodeFoldingController(_editor);
+
         _editor.TextChanged += (_, _) =>
         {
             UpdateMinimap();
             TextChanged?.Invoke(this, EventArgs.Empty);
         };
+
+        // Suivi de la position du curseur
         _editor.TextArea.Caret.PositionChanged += (_, _) =>
             CaretPositionChanged?.Invoke(this, EventArgs.Empty);
 
+        // Configuration de la minimap
         _minimap.FontFamily = new FontFamily("Cascadia Mono, Consolas");
         _minimap.FontSize = 3;
         _minimap.Foreground = new SolidColorBrush(Color.FromRgb(125, 132, 148));
@@ -69,16 +77,27 @@ public class CodeEditor : UserControl
         };
 
         var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(
+            new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(
+            new ColumnDefinition { Width = GridLength.Auto });
+
         Grid.SetColumn(_editor, 0);
         Grid.SetColumn(minimapBorder, 1);
+
         grid.Children.Add(_editor);
         grid.Children.Add(minimapBorder);
+
         Content = grid;
 
         UpdateMinimap();
     }
+
+    /// <summary>
+    /// Accès à l'éditeur AvalonEdit interne.
+    /// Utilisé par EditorActions.
+    /// </summary>
+    public TextEditor InnerEditor => _editor;
 
     public string Text
     {
@@ -88,13 +107,27 @@ public class CodeEditor : UserControl
 
     public void SetLanguage(string? filePath)
     {
-        _editor.SyntaxHighlighting = LanguageHighlighter.GetDefinition(filePath);
+        _editor.SyntaxHighlighting =
+            LanguageHighlighter.GetDefinition(filePath);
+
+        _foldingController.SetLanguage(filePath);
+    }
+
+    public void FoldAll()
+    {
+        _foldingController.FoldAll();
+    }
+
+    public void UnfoldAll()
+    {
+        _foldingController.UnfoldAll();
     }
 
     private void UpdateMinimap()
     {
         var text = _editor.Text ?? "";
         var lines = text.Split('\n');
+
         _minimap.Text = string.Join('\n', lines.Take(500));
     }
 }

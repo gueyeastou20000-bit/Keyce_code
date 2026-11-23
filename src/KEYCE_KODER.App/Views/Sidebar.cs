@@ -2,6 +2,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using KEYCE_KODER.App.Search;
 
 namespace KEYCE_KODER.App.Views;
 
@@ -19,7 +20,7 @@ public class Sidebar : Border
     private readonly Dictionary<string, UIElement> _views = new();
 
     public ExplorerView Explorer { get; } = new();
-    public SearchView Search { get; } = new();
+    public SearchPanel Search { get; }
     public WelcomeView Welcome { get; } = new();
     public SettingsView Settings { get; } = new();
 
@@ -30,7 +31,11 @@ public class Sidebar : Border
         BorderBrush = Theme.Border;
         BorderThickness = new Thickness(0, 0, 1, 0);
 
+        _views["explorer"] = Explorer;
+
+        Search = new SearchPanel(() => Explorer.CurrentFolder);
         _views["search"] = Search;
+
         _views["home"] = Welcome;
         _views["settings"] = Settings;
 
@@ -41,7 +46,8 @@ public class Sidebar : Border
         dock.Children.Add(_content);
 
         Child = dock;
-        ShowView("search");
+
+        ShowView("explorer");
     }
 
     public void ShowView(string id)
@@ -58,9 +64,6 @@ public class Sidebar : Border
         _content.Content = _views.TryGetValue(id, out var view)
             ? view
             : null;
-
-        if (id == "search")
-            Search.SetFolder(Explorer.CurrentPath);
     }
 
     public void Toggle()
@@ -70,3 +73,5 @@ public class Sidebar : Border
             : Visibility.Visible;
     }
 }
+
+
