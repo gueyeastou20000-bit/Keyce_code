@@ -4,9 +4,10 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using ICSharpCode.AvalonEdit;
-using KEYCE_KODER.Editor.Highlighting;
-using KEYCE_KODER.Editor.Folding;
 using KEYCE_KODER.Editor.Completion;
+using KEYCE_KODER.Editor.Editing;
+using KEYCE_KODER.Editor.Folding;
+using KEYCE_KODER.Editor.Highlighting;
 
 namespace KEYCE_KODER.Editor.Controls;
 
@@ -15,6 +16,8 @@ public class CodeEditor : UserControl
     private readonly TextEditor _editor;
     private readonly CodeFoldingController _foldingController;
     private readonly CompletionController _completionController;
+    private readonly AutoPairController _autoPairController;
+    private readonly IndentationController _indentationController;
     private readonly TextBlock _minimap = new();
 
     public event EventHandler? TextChanged;
@@ -46,8 +49,14 @@ public class CodeEditor : UserControl
         // Initialisation du système de Code Folding
         _foldingController = new CodeFoldingController(_editor);
 
-        // Autocomplétion (mots-clés du langage + mots du fichier)
+        // Autocomplétion (mots-clés du langage, mots du fichier, snippets)
         _completionController = new CompletionController(_editor);
+
+        // Fermeture automatique des (), [], {}, "", ''
+        _autoPairController = new AutoPairController(_editor);
+
+        // Indentation intelligente (Entrée, blocs, Tab)
+        _indentationController = new IndentationController(_editor);
 
         _editor.TextChanged += (_, _) =>
         {
@@ -117,6 +126,8 @@ public class CodeEditor : UserControl
 
         _foldingController.SetLanguage(filePath);
         _completionController.SetLanguage(filePath);
+        _autoPairController.SetLanguage(filePath);
+        _indentationController.SetLanguage(filePath);
     }
 
     public void FoldAll()
