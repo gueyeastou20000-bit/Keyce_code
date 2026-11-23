@@ -1,4 +1,5 @@
-﻿using System;
+﻿using System.Linq;
+using System;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
@@ -243,9 +244,31 @@ public class MainWindow : Window
         // Menu en haut, barre d'état en bas, le reste (explorateur, onglets, panneau) au centre
         var root = new DockPanel();
 
-        DockPanel.SetDock(_mainMenu, Dock.Top);
-        root.Children.Add(_mainMenu);
+// Menus supplémentaires du ☰ (en plus de Fichier et Édition)
+var viewMenu = new MenuItem { Header = "Affichage" };
+var toggleSidebar = new MenuItem { Header = "Afficher / masquer la barre latérale", InputGestureText = "Ctrl+B" };
+toggleSidebar.Click += (_, _) => sidebar.Toggle();
+viewMenu.Items.Add(toggleSidebar);
 
+var runMenu = new MenuItem { Header = "Exécuter" };
+var runItem = new MenuItem { Header = "Lancer", InputGestureText = "F5" };
+runItem.Click += (_, _) => _bottomPanel.RequestRun();
+var stopItem = new MenuItem { Header = "Arrêter", InputGestureText = "Maj+F5" };
+stopItem.Click += (_, _) => _bottomPanel.RequestStop();
+runMenu.Items.Add(runItem);
+runMenu.Items.Add(stopItem);
+
+var menus = _mainMenu.Items.OfType<MenuItem>().ToList();
+menus.Add(viewMenu);
+menus.Add(runMenu);
+
+// L'ancien menu blanc est caché, le ☰ le remplace
+_mainMenu.Visibility = Visibility.Collapsed;
+root.Children.Add(_mainMenu);
+
+var topBar = new TopBar(menus, () => sidebar.ShowView("search"));
+DockPanel.SetDock(topBar, Dock.Top);
+root.Children.Add(topBar);
         DockPanel.SetDock(_statusBar, Dock.Bottom);
         root.Children.Add(_statusBar);
 
