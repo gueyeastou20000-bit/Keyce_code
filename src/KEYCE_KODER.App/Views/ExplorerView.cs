@@ -21,6 +21,34 @@ public class ExplorerView : DockPanel
             "bin", "obj", ".git", ".vs", "node_modules"
         };
 
+    // Extension -> (texte de la pastille, couleur)
+    private static readonly Dictionary<string, (string Label, Color Color)> FileBadges =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            [".cs"] = ("C#", Color.FromRgb(104, 217, 120)),
+            [".js"] = ("JS", Color.FromRgb(247, 223, 30)),
+            [".ts"] = ("TS", Color.FromRgb(49, 120, 198)),
+            [".json"] = ("{}", Color.FromRgb(250, 204, 21)),
+            [".html"] = ("<>", Color.FromRgb(251, 146, 60)),
+            [".htm"] = ("<>", Color.FromRgb(251, 146, 60)),
+            [".xml"] = ("<>", Color.FromRgb(251, 146, 60)),
+            [".xaml"] = ("<>", Color.FromRgb(96, 170, 255)),
+            [".css"] = ("#", Color.FromRgb(96, 170, 255)),
+            [".py"] = ("PY", Color.FromRgb(96, 170, 255)),
+            [".md"] = ("i", Color.FromRgb(96, 170, 255)),
+            [".txt"] = ("≡", Color.FromRgb(145, 151, 167)),
+            [".csproj"] = ("◆", Color.FromRgb(167, 139, 250)),
+            [".slnx"] = ("◆", Color.FromRgb(167, 139, 250)),
+            [".sln"] = ("◆", Color.FromRgb(167, 139, 250)),
+            [".props"] = ("◆", Color.FromRgb(167, 139, 250)),
+            [".gitignore"] = ("◆", Color.FromRgb(145, 151, 167)),
+            [".png"] = ("▣", Color.FromRgb(80, 200, 151)),
+            [".jpg"] = ("▣", Color.FromRgb(80, 200, 151)),
+            [".jpeg"] = ("▣", Color.FromRgb(80, 200, 151)),
+            [".svg"] = ("▣", Color.FromRgb(80, 200, 151)),
+            [".ico"] = ("▣", Color.FromRgb(80, 200, 151)),
+        };
+
     public event Action<string>? FileOpenRequested;
     public event Action<string>? CurrentPathChanged;
 
@@ -110,18 +138,52 @@ public class ExplorerView : DockPanel
         };
 
         panel.Children.Add(SvgIconFactory.Create(icon, 15));
-
-        panel.Children.Add(new TextBlock
-        {
-            Text = text,
-            Foreground = Theme.Text,
-            FontSize = 12,
-            Margin = new Thickness(7, 1, 0, 1),
-            VerticalAlignment = VerticalAlignment.Center
-        });
+        panel.Children.Add(CreateLabel(text));
 
         return panel;
     }
+
+    /// <summary>En-tête d'un fichier : pastille colorée selon l'extension + nom.</summary>
+    private static StackPanel CreateFileHeader(string path)
+    {
+        string name = Path.GetFileName(path);
+        string ext = Path.GetExtension(path);
+
+        // ".gitignore" n'a pas d'extension pour .NET : on utilise le nom complet
+        string key = string.IsNullOrEmpty(ext) ? name : ext;
+
+        if (!FileBadges.TryGetValue(key, out var badge))
+            return CreateHeader(name, "file");
+
+        var panel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        panel.Children.Add(new TextBlock
+        {
+            Text = badge.Label,
+            Foreground = new SolidColorBrush(badge.Color),
+            FontSize = 10,
+            FontWeight = FontWeights.Bold,
+            Width = 18,
+            TextAlignment = TextAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        });
+
+        panel.Children.Add(CreateLabel(name));
+        return panel;
+    }
+
+    private static TextBlock CreateLabel(string text) => new()
+    {
+        Text = text,
+        Foreground = Theme.Text,
+        FontSize = 12,
+        Margin = new Thickness(7, 1, 0, 1),
+        VerticalAlignment = VerticalAlignment.Center
+    };
 
     public void OpenFolder(string path)
     {
@@ -159,9 +221,9 @@ public class ExplorerView : DockPanel
     {
         var node = new TreeViewItem
         {
-            Header = CreateHeader(
-                Path.GetFileName(path),
-                isDirectory ? "folder" : "file"),
+            Header = isDirectory
+                ? CreateHeader(Path.GetFileName(path), "folder")
+                : CreateFileHeader(path),
             Tag = path,
             Foreground = Theme.Text,
             Padding = new Thickness(2, 2, 4, 2)
