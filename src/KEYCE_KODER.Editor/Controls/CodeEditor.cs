@@ -1,0 +1,150 @@
+﻿using System;
+using System.Linq;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+using ICSharpCode.AvalonEdit;
+using KEYCE_KODER.Editor.Completion;
+using KEYCE_KODER.Editor.Editing;
+using KEYCE_KODER.Editor.Folding;
+using KEYCE_KODER.Editor.Highlighting;
+
+namespace KEYCE_KODER.Editor.Controls;
+
+public class CodeEditor : UserControl
+{
+    private readonly TextEditor _editor;
+    private readonly CodeFoldingController _foldingController;
+    private readonly CompletionController _completionController;
+    private readonly AutoPairController _autoPairController;
+    private readonly IndentationController _indentationController;
+    private readonly TextBlock _minimap = new();
+
+    public event EventHandler? TextChanged;
+    public event EventHandler? CaretPositionChanged;
+
+    public (int Line, int Column) CaretPosition
+    {
+        get
+        {
+            var location = _editor.TextArea.Caret.Location;
+            return (location.Line, location.Column);
+        }
+    }
+
+    public CodeEditor()
+    {
+        _editor = new TextEditor
+        {
+            ShowLineNumbers = true,
+            FontSize = 14,
+            FontFamily = new FontFamily("Cascadia Code, Consolas"),
+            WordWrap = false,
+            Background = new SolidColorBrush(Color.FromRgb(15, 18, 26)),
+            Foreground = new SolidColorBrush(Color.FromRgb(218, 222, 232)),
+            Padding = new Thickness(8, 6, 8, 8),
+            LineNumbersForeground = new SolidColorBrush(Color.FromRgb(99, 108, 126))
+        };
+
+        // Initialisation du système de Code Folding
+        _foldingController = new CodeFoldingController(_editor);
+
+        // Autocomplétion (mots-clés du langage, mots du fichier, snippets)
+        _completionController = new CompletionController(_editor);
+
+        // Fermeture automatique des (), [], {}, "", ''
+        _autoPairController = new AutoPairController(_editor);
+
+        // Indentation intelligente (Entrée, blocs, Tab)
+        _indentationController = new IndentationController(_editor);
+
+        _editor.TextChanged += (_, _) =>
+        {
+            UpdateMinimap();
+            TextChanged?.Invoke(this, EventArgs.Empty);
+        };
+
+        // Suivi de la position du curseur
+        _editor.TextArea.Caret.PositionChanged += (_, _) =>
+            CaretPositionChanged?.Invoke(this, EventArgs.Empty);
+
+        // Configuration de la minimap
+        _minimap.FontFamily = new FontFamily("Cascadia Mono, Consolas");
+        _minimap.FontSize = 3;
+        _minimap.Foreground = new SolidColorBrush(Color.FromRgb(125, 132, 148));
+        _minimap.Opacity = 0.72;
+        _minimap.Padding = new Thickness(8, 8, 8, 8);
+        _minimap.TextWrapping = TextWrapping.NoWrap;
+
+        var minimapBorder = new Border
+        {
+            Width = 110,
+            Background = new SolidColorBrush(Color.FromRgb(13, 16, 23)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(43, 49, 63)),
+            BorderThickness = new Thickness(1, 0, 0, 0),
+            Child = new ScrollViewer
+            {
+                VerticalScrollBarVisibility = ScrollBarVisibility.Hidden,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden,
+                Content = _minimap
+            }
+        };
+
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(
+            new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(
+            new ColumnDefinition { Width = GridLength.Auto });
+
+        Grid.SetColumn(_editor, 0);
+        Grid.SetColumn(minimapBorder, 1);
+
+        grid.Children.Add(_editor);
+        grid.Children.Add(minimapBorder);
+
+        Content = grid;
+
+        UpdateMinimap();
+    }
+
+    /// <summary>
+    /// Accès à l'éditeur AvalonEdit interne.
+    /// Utilisé par EditorActions.
+    /// </summary>
+    public TextEditor InnerEditor => _editor;
+
+    public string Text
+    {
+        get => _editor.Text;
+        set => _editor.Text = value;
+    }
+
+    public void SetLanguage(string? filePath)
+    {
+        _editor.SyntaxHighlighting =
+            LanguageHighlighter.GetDefinition(filePath);
+
+        _foldingController.SetLanguage(filePath);
+        _completionController.SetLanguage(filePath);
+        _autoPairController.SetLanguage(filePath);
+        _indentationController.SetLanguage(filePath);
+    }
+
+    public void FoldAll()
+    {
+        _foldingController.FoldAll();
+    }
+
+    public void UnfoldAll()
+    {
+        _foldingController.UnfoldAll();
+    }
+
+    private void UpdateMinimap()
+    {
+        var text = _editor.Text ?? "";
+        var lines = text.Split('\n');
+
+        _minimap.Text = string.Join('\n', lines.Take(500));
+    }
+}

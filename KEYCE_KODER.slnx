@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/KEYCE_KODER.Analysis/KEYCE_KODER.Analysis.csproj" />
+    <Project Path="src/KEYCE_KODER.App/KEYCE_KODER.App.csproj" />
+    <Project Path="src/KEYCE_KODER.Core/KEYCE_KODER.Core.csproj" />
+    <Project Path="src/KEYCE_KODER.Editor/KEYCE_KODER.Editor.csproj" />
+    <Project Path="src/KEYCE_KODER.Lsp/KEYCE_KODER.Lsp.csproj" />
+    <Project Path="src/KEYCE_KODER.Runner/KEYCE_KODER.Runner.csproj" />
+    <Project Path="src/KEYCE_KODER.Terminal/KEYCE_KODER.Terminal.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/KEYCE_KODER.Tests/KEYCE_KODER.Tests.csproj" />
+  </Folder>
+</Solution>
