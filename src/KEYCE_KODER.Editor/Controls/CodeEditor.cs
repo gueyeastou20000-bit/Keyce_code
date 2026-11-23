@@ -6,6 +6,7 @@ using System.Windows.Media;
 using ICSharpCode.AvalonEdit;
 using KEYCE_KODER.Editor.Highlighting;
 using KEYCE_KODER.Editor.Folding;
+using KEYCE_KODER.Editor.Completion;
 
 namespace KEYCE_KODER.Editor.Controls;
 
@@ -13,6 +14,7 @@ public class CodeEditor : UserControl
 {
     private readonly TextEditor _editor;
     private readonly CodeFoldingController _foldingController;
+    private readonly CompletionController _completionController;
     private readonly TextBlock _minimap = new();
 
     public event EventHandler? TextChanged;
@@ -43,6 +45,9 @@ public class CodeEditor : UserControl
 
         // Initialisation du système de Code Folding
         _foldingController = new CodeFoldingController(_editor);
+
+        // Autocomplétion (mots-clés du langage + mots du fichier)
+        _completionController = new CompletionController(_editor);
 
         _editor.TextChanged += (_, _) =>
         {
@@ -111,6 +116,7 @@ public class CodeEditor : UserControl
             LanguageHighlighter.GetDefinition(filePath);
 
         _foldingController.SetLanguage(filePath);
+        _completionController.SetLanguage(filePath);
     }
 
     public void FoldAll()
