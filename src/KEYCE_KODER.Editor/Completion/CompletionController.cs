@@ -26,6 +26,10 @@ public sealed class CompletionController
     private string? _filePath;
     private LanguageDefinition _language = LanguageCatalog.PlainText;
 
+    /// <summary>Un niveau d'indentation : tabulation (Go) ou espaces (4 par défaut).</summary>
+    private string IndentUnit =>
+        _language.UseTabs ? "\t" : new string(' ', _editor.Options.IndentationSize);
+
     /// <summary>Permet de désactiver l'ouverture automatique (Ctrl+Espace reste disponible).</summary>
     public bool AutoOpen { get; set; } = true;
 
@@ -50,11 +54,11 @@ public sealed class CompletionController
         if (!AutoOpen || _window != null || e.Text.Length == 0)
             return;
 
-        // On n'ouvre la liste que pendant la frappe d'un mot (lettre, chiffre, « _ »)
-        if (!CompletionService.IsIdentifierChar(e.Text[0]))
+        // On n'ouvre la liste que pendant la frappe d'un mot (selon le langage : $ en PHP, - en CSS...)
+        if (!_language.IsWordChar(e.Text[0]))
             return;
 
-        (_, string prefix) = CompletionService.GetPrefix(_editor.Text, _editor.CaretOffset);
+        (_, string prefix) = CompletionService.GetPrefix(_editor.Text, _editor.CaretOffset, _language);
 
         // Pas avant 2 caractères, et jamais au milieu d'un nombre (ex. 3.14)
         if (prefix.Length < MinPrefixLength || char.IsDigit(prefix[0]))
@@ -67,7 +71,7 @@ public sealed class CompletionController
     {
         // Un caractère qui ne fait pas partie d'un mot (espace, parenthèse, point...)
         // ferme la liste SANS insérer de suggestion, comme dans VS Code.
-        if (_window != null && e.Text.Length > 0 && !CompletionService.IsIdentifierChar(e.Text[0]))
+        if (_window != null && e.Text.Length > 0 && !_language.IsWordChar(e.Text[0]))
             _window.Close();
     }
 
@@ -93,7 +97,7 @@ public sealed class CompletionController
         if (items.Count == 0)
             return; // rien à proposer : on n'ouvre pas une liste vide
 
-        (int start, string prefix) = CompletionService.GetPrefix(text, caret);
+        (int start, string prefix) = CompletionService.GetPrefix(text, caret, _language);
 
         var window = new CompletionWindow(_editor.TextArea)
         {
@@ -110,7 +114,7 @@ public sealed class CompletionController
         window.CompletionList.ListBox.BorderThickness = new Thickness(0);
 
         foreach (CompletionItem item in items)
-            window.CompletionList.CompletionData.Add(new CompletionData(item));
+            window.CompletionList.CompletionData.Add(new CompletionData(item, IndentUnit));
 
         window.Closed += (_, _) =>
         {

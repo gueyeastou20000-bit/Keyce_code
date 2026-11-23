@@ -38,6 +38,15 @@ public sealed class CompletionService
         // Clé = texte de la suggestion : un même mot n'apparaît qu'une fois
         var results = new Dictionary<string, CompletionItem>(StringComparer.Ordinal);
 
+        // 0. Structures de code (snippets)
+        foreach (Snippet snippet in SnippetCatalog.For(language.Id))
+        {
+            if (StartsWith(snippet.Prefix, prefix))
+                results.TryAdd(
+                    "snippet:" + snippet.Prefix,
+                    new CompletionItem(snippet.Prefix, CompletionKind.Snippet, snippet.Description, snippet.Body));
+        }
+
         // 1. Mots-clés et fonctions du langage (prioritaires)
         foreach (string keyword in language.Keywords)
         {
@@ -66,9 +75,12 @@ public sealed class CompletionService
         }
 
         return results.Values
-            .Where(item => item.Text != prefix) // inutile de proposer exactement ce qui est déjà tapé
+            // Inutile de proposer exactement ce qui est déjà tapé... sauf un snippet :
+            // taper « for » doit justement proposer la boucle complète.
+            .Where(item => item.Kind == CompletionKind.Snippet || item.Text != prefix)
             .OrderBy(item => item.Text.StartsWith(prefix, StringComparison.Ordinal) ? 0 : 1)
             .ThenBy(item => item.Text, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.Kind == CompletionKind.Snippet ? 0 : 1) // à texte égal, le snippet d'abord
             .Take(MaxItems)
             .ToList();
     }

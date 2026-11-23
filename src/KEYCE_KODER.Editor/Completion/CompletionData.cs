@@ -5,6 +5,7 @@ using ICSharpCode.AvalonEdit.CodeCompletion;
 using ICSharpCode.AvalonEdit.Document;
 using ICSharpCode.AvalonEdit.Editing;
 using KEYCE_KODER.Core.Completion;
+using ICSharpCode.AvalonEdit.Document;
 
 namespace KEYCE_KODER.Editor.Completion;
 
@@ -18,11 +19,16 @@ public sealed class CompletionData : ICompletionData
     private static readonly Brush BuiltinBrush = Frozen(220, 220, 170);  // jaune pâle
     private static readonly Brush WordBrush = Frozen(140, 140, 140);     // gris
 
+    private static readonly Brush SnippetBrush = Frozen(78, 201, 176);   // turquoise
+
     private readonly CompletionItem _item;
 
-    public CompletionData(CompletionItem item)
+    private readonly string _indentUnit;
+
+    public CompletionData(CompletionItem item, string indentUnit)
     {
         _item = item;
+        _indentUnit = indentUnit;
         Content = BuildContent(item);
     }
 
@@ -42,9 +48,28 @@ public sealed class CompletionData : ICompletionData
     public double Priority => 0;
 
     /// <summary>Appelée quand l'utilisateur valide (Entrée ou Tab) : remplace le mot tapé.</summary>
+    /// <summary>Appelée quand l'utilisateur valide (Entrée ou Tab).</summary>
     public void Complete(TextArea textArea, ISegment completionSegment, EventArgs insertionRequestEventArgs)
     {
-        textArea.Document.Replace(completionSegment, Text);
+        // Suggestion simple : on remplace le mot tapé
+        if (_item.SnippetBody is null)
+        {
+            textArea.Document.Replace(completionSegment, Text);
+            return;
+        }
+
+        // Snippet : on développe le modèle avec l'indentation de la ligne actuelle
+        TextDocument document = textArea.Document;
+        int offset = completionSegment.Offset;
+        DocumentLine line = document.GetLineByOffset(offset);
+
+        string indentation = document.GetText(TextUtilities.GetLeadingWhitespace(document, line));
+        string newLine = TextUtilities.GetNewLineFromDocument(document, line.LineNumber);
+
+        (string text, int caret) = SnippetExpander.Expand(_item.SnippetBody, indentation, _indentUnit, newLine);
+
+        document.Replace(completionSegment, text);
+        textArea.Caret.Offset = offset + caret; // le curseur va à la place de $0
     }
 
     // ----- Affichage -----
@@ -55,6 +80,7 @@ public sealed class CompletionData : ICompletionData
         {
             CompletionKind.Keyword => ("mot-clé", KeywordBrush),
             CompletionKind.Builtin => ("ƒ", BuiltinBrush),
+            CompletionKind.Snippet => ("snippet", SnippetBrush),
             _ => ("abc", WordBrush)
         };
 
