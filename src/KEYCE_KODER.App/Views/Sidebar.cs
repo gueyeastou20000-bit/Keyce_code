@@ -31,7 +31,7 @@ public class Sidebar : Border
         BorderBrush = Theme.Border;
         BorderThickness = new Thickness(0, 0, 1, 0);
 
-        _views["explorer"] = Explorer;
+        _views["explorer"] = BuildExplorerHost();
 
         Search = new SearchPanel(() => Explorer.CurrentFolder);
         _views["search"] = Search;
@@ -49,6 +49,41 @@ public class Sidebar : Border
 
         ShowView("explorer");
     }
+
+    /// <summary>Explorateur en haut, sections OUTLINE et TIMELINE repliables en bas.</summary>
+    private UIElement BuildExplorerHost()
+    {
+        var grid = new Grid();
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        Grid.SetRow(Explorer, 0);
+        grid.Children.Add(Explorer);
+
+        var sections = new StackPanel();
+        sections.Children.Add(MakeSection("OUTLINE"));
+        sections.Children.Add(MakeSection("TIMELINE"));
+        Grid.SetRow(sections, 1);
+        grid.Children.Add(sections);
+
+        return grid;
+    }
+
+    private static Expander MakeSection(string title) => new()
+    {
+        Header = new TextBlock
+        {
+            Text = title,
+            Foreground = Theme.Text,
+            FontWeight = FontWeights.SemiBold,
+            FontSize = 11
+        },
+        Foreground = Theme.Muted,
+        Padding = new Thickness(8, 6, 8, 6),
+        BorderBrush = Theme.Border,
+        BorderThickness = new Thickness(0, 1, 0, 0),
+        IsExpanded = false
+    };
 
     public void ShowView(string id)
     {
@@ -73,5 +108,3 @@ public class Sidebar : Border
             : Visibility.Visible;
     }
 }
-
-

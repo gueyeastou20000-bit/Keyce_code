@@ -1,7 +1,9 @@
 ﻿using System;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Input;
 
 namespace KEYCE_KODER.App.Views;
@@ -21,15 +23,50 @@ public class ActivityBar : Border
         BorderThickness = new Thickness(0, 0, 1, 0);
         Child = _panel;
 
-        AddButton("explorer", "explorer", "Explorateur");
+        AddLogo();
+
+        Button explorer = AddButton("explorer", "explorer", "Explorateur");
         AddButton("search", "search", "Recherche");
         AddTextButton("home", "⌂", "Accueil");
         AddTextButton("settings", "⚙", "Paramètres");
 
-        Select((Button)_panel.Children[0]);
+        Select(explorer);
     }
 
-    private void AddButton(string id, string icon, string tooltip)
+    /// <summary>Logo K en haut de la barre (non cliquable, ne déclenche aucune vue).</summary>
+    private void AddLogo()
+    {
+        try
+        {
+            string path = Path.Combine(AppContext.BaseDirectory, "Assets", "logo.png");
+            if (!File.Exists(path))
+                return;
+
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit();
+            bitmap.UriSource = new Uri(path, UriKind.Absolute);
+            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            bitmap.DecodePixelWidth = 64;
+            bitmap.EndInit();
+            bitmap.Freeze();
+
+            _panel.Children.Add(new Image
+            {
+                Source = bitmap,
+                Width = 30,
+                Height = 30,
+                Margin = new Thickness(0, 12, 0, 12),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                ToolTip = "KEYCE KODER"
+            });
+        }
+        catch
+        {
+            // logo introuvable : la barre fonctionne sans
+        }
+    }
+
+    private Button AddButton(string id, string icon, string tooltip)
     {
         var button = new Button
         {
@@ -56,9 +93,10 @@ public class ActivityBar : Border
         };
         button.Click += (_, _) => Select(button);
         _panel.Children.Add(button);
+        return button;
     }
 
-    private void AddTextButton(string id, string text, string tooltip)
+    private Button AddTextButton(string id, string text, string tooltip)
     {
         var button = new Button
         {
@@ -91,6 +129,7 @@ public class ActivityBar : Border
         };
         button.Click += (_, _) => Select(button);
         _panel.Children.Add(button);
+        return button;
     }
 
     private void Select(Button button)
