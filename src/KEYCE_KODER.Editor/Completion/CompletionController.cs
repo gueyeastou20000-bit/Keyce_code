@@ -4,6 +4,7 @@ using System.Windows.Media;
 using ICSharpCode.AvalonEdit;
 using ICSharpCode.AvalonEdit.CodeCompletion;
 using KEYCE_KODER.Core.Completion;
+using KEYCE_KODER.Core.Languages;
 
 namespace KEYCE_KODER.Editor.Completion;
 
@@ -23,6 +24,7 @@ public sealed class CompletionController
     private readonly CompletionService _service = new();
     private CompletionWindow? _window;
     private string? _filePath;
+    private LanguageDefinition _language = LanguageCatalog.PlainText;
 
     /// <summary>Permet de désactiver l'ouverture automatique (Ctrl+Espace reste disponible).</summary>
     public bool AutoOpen { get; set; } = true;
@@ -40,6 +42,7 @@ public sealed class CompletionController
     public void SetLanguage(string? filePath)
     {
         _filePath = filePath;
+        _language = LanguageCatalog.FromPath(filePath);
     }
 
     private void OnTextEntered(object sender, TextCompositionEventArgs e)

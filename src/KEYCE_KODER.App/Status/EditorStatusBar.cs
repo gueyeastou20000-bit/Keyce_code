@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using KEYCE_KODER.App.Tabs;
+using KEYCE_KODER.Core.Languages;
 
 namespace KEYCE_KODER.App.Status;
 
@@ -48,24 +49,8 @@ public sealed class EditorStatusBar : Border
         _position.Text = $"Ln {tab.Actions.CaretLine}, Col {tab.Actions.CaretColumn}";
     }
 
-    private static string LanguageName(string? filePath)
-    {
-        string extension = Path.GetExtension(filePath ?? string.Empty).ToLowerInvariant();
-
-        return extension switch
-        {
-            ".py" => "Python",
-            ".cs" => "C#",
-            ".js" => "JavaScript",
-            ".html" or ".htm" => "HTML",
-            ".css" => "CSS",
-            ".json" => "JSON",
-            ".xml" or ".xaml" => "XML",
-            ".md" => "Markdown",
-            ".txt" => "Texte",
-            _ => "Texte brut"
-        };
-    }
+    private static string LanguageName(string? filePath) =>
+    LanguageCatalog.FromPath(filePath).DisplayName;
 
     private static TextBlock MakeText() => new()
     {

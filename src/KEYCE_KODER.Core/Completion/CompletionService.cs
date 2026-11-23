@@ -1,4 +1,5 @@
 ﻿using System.Text.RegularExpressions;
+using KEYCE_KODER.Core.Languages;
 
 namespace KEYCE_KODER.Core.Completion;
 
@@ -12,18 +13,18 @@ public sealed class CompletionService
     public const int MinWordLength = 3;
     public const int MaxItems = 300;
 
-    // Un identifiant : une lettre ou « _ », puis lettres, chiffres ou « _ »
-    private static readonly Regex WordRegex = new(@"[A-Za-z_][A-Za-z0-9_]*", RegexOptions.Compiled);
-
-    public static bool IsIdentifierChar(char c) => char.IsLetterOrDigit(c) || c == '_';
+    /// <summary>Caractère de mot « générique » (lettre, chiffre, « _ »).</summary>
+    public static bool IsIdentifierChar(char c) => LanguageCatalog.PlainText.IsWordChar(c);
 
     /// <summary>Le mot en cours de frappe juste avant le curseur, et sa position de début.</summary>
-    public static (int Start, string Prefix) GetPrefix(string text, int caretOffset)
+    public static (int Start, string Prefix) GetPrefix(
+        string text, int caretOffset, LanguageDefinition? language = null)
     {
+        language ??= LanguageCatalog.PlainText;
         caretOffset = Math.Clamp(caretOffset, 0, text.Length);
 
         int start = caretOffset;
-        while (start > 0 && IsIdentifierChar(text[start - 1]))
+        while (start > 0 && language.IsWordChar(text[start - 1]))
             start--;
 
         return (start, text[start..caretOffset]);
@@ -31,20 +32,27 @@ public sealed class CompletionService
 
     public IReadOnlyList<CompletionItem> GetCompletions(string text, int caretOffset, string? filePath)
     {
-        (int start, string prefix) = GetPrefix(text, caretOffset);
+        LanguageDefinition language = LanguageCatalog.FromPath(filePath);
+        (int start, string prefix) = GetPrefix(text, caretOffset, language);
 
         // Clé = texte de la suggestion : un même mot n'apparaît qu'une fois
         var results = new Dictionary<string, CompletionItem>(StringComparer.Ordinal);
 
         // 1. Mots-clés et fonctions du langage (prioritaires)
-        foreach (CompletionItem item in LanguageKeywords.For(filePath))
+        foreach (string keyword in language.Keywords)
         {
-            if (StartsWith(item.Text, prefix))
-                results.TryAdd(item.Text, item);
+            if (StartsWith(keyword, prefix))
+                results.TryAdd(keyword, new CompletionItem(keyword, CompletionKind.Keyword, $"Mot-clé {language.DisplayName}"));
+        }
+
+        foreach (string builtin in language.Builtins)
+        {
+            if (StartsWith(builtin, prefix))
+                results.TryAdd(builtin, new CompletionItem(builtin, CompletionKind.Builtin, $"{language.DisplayName} : fonction / objet courant"));
         }
 
         // 2. Mots déjà présents dans le fichier
-        foreach (Match match in WordRegex.Matches(text))
+        foreach (Match match in language.WordRegex.Matches(text))
         {
             if (match.Length < MinWordLength)
                 continue;

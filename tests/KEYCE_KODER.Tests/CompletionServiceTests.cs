@@ -60,4 +60,37 @@ public sealed class CompletionServiceTests
 
         CollectionAssert.Contains(texts, "print");
     }
+
+    [TestMethod]
+    public void Catalogue_ReconnaitLesLangagesParExtension()
+    {
+        Assert.AreEqual("Python", KEYCE_KODER.Core.Languages.LanguageCatalog.FromPath("a.py").DisplayName);
+        Assert.AreEqual("TypeScript", KEYCE_KODER.Core.Languages.LanguageCatalog.FromPath("a.ts").DisplayName);
+        Assert.AreEqual("Go", KEYCE_KODER.Core.Languages.LanguageCatalog.FromPath("a.go").DisplayName);
+        Assert.AreEqual("Texte brut", KEYCE_KODER.Core.Languages.LanguageCatalog.FromPath("a.inconnu").DisplayName);
+    }
+
+    [TestMethod]
+    public void GetCompletions_Php_GereLeDollar()
+    {
+        var texts = Texts(_service.GetCompletions("$_G", 3, "index.php"));
+
+        CollectionAssert.Contains(texts, "$_GET");
+    }
+
+    [TestMethod]
+    public void GetCompletions_Css_GereLeTiret()
+    {
+        var texts = Texts(_service.GetCompletions("background-c", 12, "style.css"));
+
+        CollectionAssert.Contains(texts, "background-color");
+    }
+
+    [TestMethod]
+    public void GetCompletions_Sql_IgnoreLaCasse()
+    {
+        var texts = Texts(_service.GetCompletions("sel", 3, "requete.sql"));
+
+        CollectionAssert.Contains(texts, "SELECT");
+    }
 }
