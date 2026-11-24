@@ -11,7 +11,7 @@ using KEYCE_KODER.Terminal;
 
 namespace KEYCE_KODER.App.Views;
 
-/// <summary>Panneau inférieur : sortie d'exécution et terminal intégré.</summary>
+/// <summary>Panneau inférieur : sortie, terminal, problèmes et débogueur.</summary>
 public sealed class BottomPanel : Grid
 {
     private static readonly Brush PanelBg = Theme.Panel;
@@ -60,12 +60,31 @@ public sealed class BottomPanel : Grid
     private readonly ConsoleView _termView = new();
     private readonly TextBox _input = new();
 
+    // Onglets PROBLÈMES et DÉBOGUEUR
+    private readonly Grid _problemsHost = new();
+    private readonly Grid _debugHost = new();
+    private readonly TextBlock _problemsMessage = new();
+    private readonly TextBlock _badgeText = new();
+    private readonly Border _badge = new();
+
     private readonly TextBlock _status = new();
     private readonly Button _tabOutput = MakeButton("SORTIE");
     private readonly Button _tabTerminal = MakeButton("TERMINAL");
+    private readonly Button _tabProblems = MakeButton("PROBLÈMES");
+    private readonly Button _tabDebug = MakeButton("DÉBOGUEUR");
     private readonly Button _restart = MakeButton("↻ Redémarrer");
     private readonly Button _run = MakeButton("▶ Run", Green);
     private readonly Button _stop = MakeButton("■ Stop", Red);
+
+    // Petites icônes à droite
+    private readonly Button _newTerminal = MakeIcon("+", "Nouveau terminal");
+    private readonly Button _clear = MakeIcon("🗑", "Effacer");
+    private readonly Button _maximize = MakeIcon("^", "Agrandir le panneau");
+    private readonly Button _close = MakeIcon("×", "Fermer le panneau");
+
+    private int _currentTab; // 0 sortie, 1 terminal, 2 problèmes, 3 débogueur
+    private bool _maximized;
+    private GridLength _savedHeight = new(220);
 
     /// <param name="prepareScript">Sauvegarde le fichier actif et renvoie son chemin (null = annuler).</param>
     public BottomPanel(
@@ -86,24 +105,31 @@ public sealed class BottomPanel : Grid
         BuildHeader();
         BuildOutputHost();
         BuildTerminalHost();
+        BuildProblemsHost();
+        BuildDebugHost();
 
         SetRow(_outputHost, 1);
         SetRow(_terminalHost, 1);
+        SetRow(_problemsHost, 1);
+        SetRow(_debugHost, 1);
         Children.Add(_outputHost);
         Children.Add(_terminalHost);
+        Children.Add(_problemsHost);
+        Children.Add(_debugHost);
 
-        _tabOutput.Click += (_, _) => ShowTab(terminal: false);
-        _tabTerminal.Click += (_, _) => ShowTab(terminal: true);
+        _tabOutput.Click += (_, _) => ShowPanel(0);
+        _tabTerminal.Click += (_, _) => ShowPanel(1);
+        _tabProblems.Click += (_, _) => ShowPanel(2);
+        _tabDebug.Click += (_, _) => ShowPanel(3);
         _run.Click += (_, _) => RequestRun();
         _stop.Click += (_, _) => RequestStop();
 
-        _restart.Click += (_, _) =>
-        {
-            _termView.Clear();
-            UpdateTerminalWorkingDirectory();
-            _terminal.Restart();
-        };
-        
+        _restart.Click += (_, _) => RestartTerminal();
+        _newTerminal.Click += (_, _) => NewTerminal();
+        _clear.Click += (_, _) => ClearCurrent();
+        _maximize.Click += (_, _) => ToggleMaximize();
+        _close.Click += (_, _) => ClosePanel();
+
         _input.PreviewKeyDown += OnInputKeyDown;
         _programInput.PreviewKeyDown += OnProgramInputKeyDown;
 
@@ -113,15 +139,106 @@ public sealed class BottomPanel : Grid
         _terminal.OutputReceived += (_, lines) => _termView.Append(lines);
         _terminal.Exited += OnTerminalExited;
 
-        ShowTab(terminal: false);
+        SetProblemCount(0);
+        ShowPanel(0);
         UpdateState();
     }
 
-    // ───── API publique (raccourcis clavier F5 / Maj+F5) ─────
+    // ───── API publique (raccourcis clavier, menus) ─────
 
     public void RequestRun() => _ = RunAsync();
 
     public void RequestStop() => _runner.Stop();
+
+    /// <summary>Redémarre le shell et affiche l'onglet Terminal.</summary>
+    public void NewTerminal()
+    {
+        OpenPanel();
+        ShowPanel(1);
+        RestartTerminal();
+    }
+
+    /// <summary>Met à jour le badge rouge de l'onglet Problèmes.</summary>
+    public void SetProblemCount(int count)
+    {
+        _badge.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        _badgeText.Text = count.ToString();
+        _problemsMessage.Text = count == 0
+            ? "Aucun problème détecté dans l'espace de travail."
+            : $"{count} problème(s) détecté(s).";
+    }
+
+    /// <summary>Ferme le panneau s'il est ouvert, le rouvre sinon.</summary>
+    public void TogglePanel()
+    {
+        if (Visibility == Visibility.Visible) ClosePanel();
+        else OpenPanel();
+    }
+
+    // ───── Fermer / agrandir ─────
+
+    private RowDefinition? MyRow =>
+        Parent is Grid host ? host.RowDefinitions[GetRow(this)] : null;
+
+    private void ToggleMaximize()
+    {
+        if (Parent is not Grid host || MyRow is not { } row) return;
+
+        if (!_maximized)
+        {
+            _savedHeight = row.Height;
+            row.Height = new GridLength(Math.Max(300, host.ActualHeight * 0.65));
+            _maximize.Content = "⌄";
+            _maximize.ToolTip = "Réduire le panneau";
+        }
+        else
+        {
+            row.Height = _savedHeight;
+            _maximize.Content = "^";
+            _maximize.ToolTip = "Agrandir le panneau";
+        }
+        _maximized = !_maximized;
+    }
+
+    private void ClosePanel()
+    {
+        if (Parent is not Grid host || MyRow is not { } row) return;
+
+        if (!_maximized) _savedHeight = row.Height;
+        row.MinHeight = 0;
+        row.Height = new GridLength(0);
+        Visibility = Visibility.Collapsed;
+        foreach (var splitter in host.Children.OfType<GridSplitter>())
+            splitter.Visibility = Visibility.Collapsed;
+        _maximized = false;
+    }
+
+    private void OpenPanel()
+    {
+        if (Visibility == Visibility.Visible) return;
+        if (Parent is not Grid host || MyRow is not { } row) return;
+
+        row.MinHeight = 80;
+        row.Height = _savedHeight.Value < 80 ? new GridLength(220) : _savedHeight;
+        Visibility = Visibility.Visible;
+        foreach (var splitter in host.Children.OfType<GridSplitter>())
+            splitter.Visibility = Visibility.Visible;
+        _maximize.Content = "^";
+        _maximize.ToolTip = "Agrandir le panneau";
+    }
+
+    private void ClearCurrent()
+    {
+        if (_currentTab == 0) _output.Clear();
+        else if (_currentTab == 1) _termView.Clear();
+    }
+
+    private void RestartTerminal()
+    {
+        _termView.Clear();
+        UpdateTerminalWorkingDirectory();
+        _terminal.Restart();
+    }
 
     // ───── Exécution du programme ─────
 
@@ -132,7 +249,8 @@ public sealed class BottomPanel : Grid
         _run.IsEnabled = false; // évite le double clic pendant la sauvegarde
         try
         {
-            ShowTab(terminal: false);
+            OpenPanel();
+            ShowPanel(0);
             var path = await _prepareScript();
             if (path is null) return;
 
@@ -272,14 +390,23 @@ public sealed class BottomPanel : Grid
 
     // ───── Construction de l'interface ─────
 
-    private void ShowTab(bool terminal)
+    private void ShowPanel(int index)
     {
-        _outputHost.Visibility = terminal ? Visibility.Collapsed : Visibility.Visible;
-        _terminalHost.Visibility = terminal ? Visibility.Visible : Visibility.Collapsed;
-        _restart.Visibility = terminal ? Visibility.Visible : Visibility.Collapsed;
+        _currentTab = index;
+        bool terminal = index == 1;
 
-        Select(_tabOutput, !terminal);
+        _outputHost.Visibility = index == 0 ? Visibility.Visible : Visibility.Collapsed;
+        _terminalHost.Visibility = terminal ? Visibility.Visible : Visibility.Collapsed;
+        _problemsHost.Visibility = index == 2 ? Visibility.Visible : Visibility.Collapsed;
+        _debugHost.Visibility = index == 3 ? Visibility.Visible : Visibility.Collapsed;
+
+        _restart.Visibility = terminal ? Visibility.Visible : Visibility.Collapsed;
+        _clear.IsEnabled = index <= 1;
+
+        Select(_tabOutput, index == 0);
         Select(_tabTerminal, terminal);
+        Select(_tabProblems, index == 2);
+        Select(_tabDebug, index == 3);
 
         if (terminal)
         {
@@ -306,7 +433,7 @@ public sealed class BottomPanel : Grid
         {
             header.ColumnDefinitions.Add(new ColumnDefinition
             {
-                Width = i == 2 ? new GridLength(1, GridUnitType.Star) : GridLength.Auto,
+                Width = i == 1 ? new GridLength(1, GridUnitType.Star) : GridLength.Auto,
             });
         }
 
@@ -315,12 +442,47 @@ public sealed class BottomPanel : Grid
         _status.VerticalAlignment = VerticalAlignment.Center;
         _status.Margin = new Thickness(0, 0, 12, 0);
 
-        Place(header, _tabOutput, 0);
-        Place(header, _tabTerminal, 1);
-        Place(header, _status, 3);
-        Place(header, _restart, 4);
-        Place(header, _run, 5);
-        Place(header, _stop, 6);
+        // Badge rouge de l'onglet Problèmes
+        _badgeText.Foreground = Brushes.White;
+        _badgeText.FontSize = 10;
+        _badgeText.FontWeight = FontWeights.Bold;
+        _badge.Background = Red;
+        _badge.CornerRadius = new CornerRadius(9);
+        _badge.MinWidth = 18;
+        _badge.Height = 18;
+        _badge.Padding = new Thickness(5, 0, 5, 0);
+        _badge.Margin = new Thickness(6, 0, 0, 0);
+        _badge.Child = _badgeText;
+        _badgeText.HorizontalAlignment = HorizontalAlignment.Center;
+        _badgeText.VerticalAlignment = VerticalAlignment.Center;
+
+        var problemsContent = new StackPanel { Orientation = Orientation.Horizontal };
+        problemsContent.Children.Add(new TextBlock { Text = "PROBLÈMES", VerticalAlignment = VerticalAlignment.Center });
+        problemsContent.Children.Add(_badge);
+        _tabProblems.Content = problemsContent;
+
+        var tabs = new StackPanel { Orientation = Orientation.Horizontal };
+        tabs.Children.Add(_tabOutput);
+        tabs.Children.Add(_tabTerminal);
+        tabs.Children.Add(_tabProblems);
+        tabs.Children.Add(_tabDebug);
+
+        var icons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(8, 0, 6, 0)
+        };
+        icons.Children.Add(_newTerminal);
+        icons.Children.Add(_clear);
+        icons.Children.Add(_maximize);
+        icons.Children.Add(_close);
+
+        Place(header, tabs, 0);
+        Place(header, _status, 2);
+        Place(header, _restart, 3);
+        Place(header, _run, 4);
+        Place(header, _stop, 5);
+        Place(header, icons, 6);
 
         SetRow(header, 0);
         Children.Add(header);
@@ -386,6 +548,27 @@ public sealed class BottomPanel : Grid
         _terminalHost.Children.Add(inputRow);
     }
 
+    private void BuildProblemsHost()
+    {
+        _problemsMessage.Foreground = Gray;
+        _problemsMessage.FontSize = 13;
+        _problemsMessage.Margin = new Thickness(16, 14, 16, 0);
+        _problemsHost.Children.Add(_problemsMessage);
+        _problemsHost.Visibility = Visibility.Collapsed;
+    }
+
+    private void BuildDebugHost()
+    {
+        _debugHost.Children.Add(new TextBlock
+        {
+            Text = "Le débogueur n'est pas encore disponible.",
+            Foreground = Gray,
+            FontSize = 13,
+            Margin = new Thickness(16, 14, 16, 0)
+        });
+        _debugHost.Visibility = Visibility.Collapsed;
+    }
+
     private static void StyleInput(TextBox box)
     {
         box.Background = HeaderBg;
@@ -418,10 +601,18 @@ public sealed class BottomPanel : Grid
         Focusable = false, // ne vole pas le focus à l'éditeur
     };
 
-    private static SolidColorBrush Frozen(byte r, byte g, byte b)
+    private static Button MakeIcon(string glyph, string tip) => new()
     {
-        var brush = new SolidColorBrush(Color.FromRgb(r, g, b));
-        brush.Freeze();
-        return brush;
-    }
+        Content = glyph,
+        ToolTip = tip,
+        Template = FlatTemplate,
+        Background = Brushes.Transparent,
+        Foreground = Gray,
+        BorderBrush = Brushes.Transparent,
+        BorderThickness = new Thickness(0),
+        Padding = new Thickness(8, 4, 8, 4),
+        FontSize = 14,
+        Cursor = Cursors.Hand,
+        Focusable = false,
+    };
 }

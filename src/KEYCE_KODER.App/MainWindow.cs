@@ -1,6 +1,6 @@
-﻿using System.Linq;
-using System;
+﻿using System;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
@@ -241,34 +241,71 @@ public class MainWindow : Window
         grid.Children.Add(sidebar);
         grid.Children.Add(editorHost);
 
-        // Menu en haut, barre d'état en bas, le reste (explorateur, onglets, panneau) au centre
+        // Barre du haut, barre d'état en bas, le reste (explorateur, onglets, panneau) au centre
         var root = new DockPanel();
 
-// Menus supplémentaires du ☰ (en plus de Fichier et Édition)
-var viewMenu = new MenuItem { Header = "Affichage" };
-var toggleSidebar = new MenuItem { Header = "Afficher / masquer la barre latérale", InputGestureText = "Ctrl+B" };
-toggleSidebar.Click += (_, _) => sidebar.Toggle();
-viewMenu.Items.Add(toggleSidebar);
+        // ---------- Menus supplémentaires (en plus de Fichier et Édition) ----------
+        MenuItem Item(string header, Action action, string gesture = "", bool enabled = true)
+        {
+            var mi = new MenuItem { Header = header, InputGestureText = gesture, IsEnabled = enabled };
+            mi.Click += (_, _) => action();
+            return mi;
+        }
 
-var runMenu = new MenuItem { Header = "Exécuter" };
-var runItem = new MenuItem { Header = "Lancer", InputGestureText = "F5" };
-runItem.Click += (_, _) => _bottomPanel.RequestRun();
-var stopItem = new MenuItem { Header = "Arrêter", InputGestureText = "Maj+F5" };
-stopItem.Click += (_, _) => _bottomPanel.RequestStop();
-runMenu.Items.Add(runItem);
-runMenu.Items.Add(stopItem);
+        // Sélection
+        var selectMenu = new MenuItem { Header = "Sélection" };
+        selectMenu.Items.Add(Item("Tout sélectionner",
+            () => _tabManager.ActiveTab?.Actions.SelectAll(), "Ctrl+A"));
 
-var menus = _mainMenu.Items.OfType<MenuItem>().ToList();
-menus.Add(viewMenu);
-menus.Add(runMenu);
+        // Affichage
+        var viewMenu = new MenuItem { Header = "Affichage" };
+        viewMenu.Items.Add(Item("Explorateur", () => sidebar.ShowView("explorer")));
+        viewMenu.Items.Add(Item("Recherche", () => sidebar.ShowView("search")));
+        viewMenu.Items.Add(new Separator());
+        viewMenu.Items.Add(Item("Afficher / masquer la barre latérale", sidebar.Toggle, "Ctrl+B"));
 
-// L'ancien menu blanc est caché, le ☰ le remplace
-_mainMenu.Visibility = Visibility.Collapsed;
-root.Children.Add(_mainMenu);
+        // Accéder
+        var goMenu = new MenuItem { Header = "Accéder" };
+        goMenu.Items.Add(Item("Rechercher dans les fichiers…", () => sidebar.ShowView("search")));
+        goMenu.Items.Add(Item("Fichier suivant", _tabManager.ActivateNext, "Ctrl+Tab"));
+        goMenu.Items.Add(Item("Fichier précédent", _tabManager.ActivatePrevious, "Ctrl+Maj+Tab"));
 
-var topBar = new TopBar(menus, () => sidebar.ShowView("search"));
-DockPanel.SetDock(topBar, Dock.Top);
-root.Children.Add(topBar);
+        // Exécuter
+        var runMenu = new MenuItem { Header = "Exécuter" };
+        runMenu.Items.Add(Item("Lancer le fichier actif", _bottomPanel.RequestRun, "F5"));
+        runMenu.Items.Add(Item("Arrêter l'exécution", _bottomPanel.RequestStop, "Maj+F5"));
+
+        // Terminal
+        var terminalMenu = new MenuItem { Header = "Terminal" };
+        terminalMenu.Items.Add(Item("Nouveau terminal", _bottomPanel.NewTerminal));
+terminalMenu.Items.Add(Item("Afficher / masquer le panneau", _bottomPanel.TogglePanel));
+        terminalMenu.Items.Add(new Separator());
+        terminalMenu.Items.Add(Item("Exécuter le fichier actif", _bottomPanel.RequestRun));
+        terminalMenu.Items.Add(Item("Arrêter l'exécution", _bottomPanel.RequestStop));
+
+        // Aide
+        var helpMenu = new MenuItem { Header = "Aide" };
+        helpMenu.Items.Add(Item("À propos de KEYCE KODER", () => MessageBox.Show(
+            "KEYCE KODER : éditeur de code développé par le groupe.",
+            "À propos", MessageBoxButton.OK, MessageBoxImage.Information)));
+
+        // Ordre : Fichier, Édition, Sélection, Affichage, Accéder, Exécuter, Terminal, Aide
+        var menus = _mainMenu.Items.OfType<MenuItem>().ToList();
+        menus.Add(selectMenu);
+        menus.Add(viewMenu);
+        menus.Add(goMenu);
+        menus.Add(runMenu);
+        menus.Add(terminalMenu);
+        menus.Add(helpMenu);
+
+        // L'ancien menu blanc est caché, la barre du haut le remplace
+        _mainMenu.Visibility = Visibility.Collapsed;
+        root.Children.Add(_mainMenu);
+
+        var topBar = new TopBar(menus, () => sidebar.ShowView("search"));
+        DockPanel.SetDock(topBar, Dock.Top);
+        root.Children.Add(topBar);
+
         DockPanel.SetDock(_statusBar, Dock.Bottom);
         root.Children.Add(_statusBar);
 

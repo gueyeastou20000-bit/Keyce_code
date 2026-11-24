@@ -39,6 +39,12 @@ public class Sidebar : Border
         _views["home"] = Welcome;
         _views["settings"] = Settings;
 
+        _views["git"] = Placeholder("Le contrôle de code source sera bientôt disponible.");
+        _views["run"] = Placeholder("Utilise le bouton Run ou F5 pour exécuter le fichier actif.");
+        _views["extensions"] = Placeholder("Les extensions seront bientôt disponibles.");
+        _views["test"] = Placeholder("Les tests seront bientôt disponibles.");
+        _views["account"] = Placeholder("La gestion du compte sera bientôt disponible.");
+
         var dock = new DockPanel();
 
         DockPanel.SetDock(_title, Dock.Top);
@@ -49,6 +55,15 @@ public class Sidebar : Border
 
         ShowView("explorer");
     }
+
+    private static UIElement Placeholder(string message) => new TextBlock
+    {
+        Text = message,
+        Foreground = Theme.Muted,
+        FontSize = 12,
+        TextWrapping = TextWrapping.Wrap,
+        Margin = new Thickness(16, 6, 16, 0)
+    };
 
     /// <summary>Explorateur en haut, sections OUTLINE et TIMELINE repliables en bas.</summary>
     private UIElement BuildExplorerHost()
@@ -91,7 +106,12 @@ public class Sidebar : Border
         {
             "explorer" => "EXPLORATEUR",
             "search" => "RECHERCHE",
+            "git" => "CONTRÔLE DE CODE SOURCE",
+            "run" => "EXÉCUTER ET DÉBOGUER",
+            "extensions" => "EXTENSIONS",
+            "test" => "TEST",
             "home" => "ACCUEIL",
+            "account" => "COMPTE",
             "settings" => "PARAMÈTRES",
             _ => id.ToUpperInvariant()
         };

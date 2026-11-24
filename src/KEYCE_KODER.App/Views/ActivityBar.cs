@@ -12,7 +12,8 @@ public class ActivityBar : Border
 {
     public event Action<string>? ViewSelected;
 
-    private readonly StackPanel _panel = new();
+    private readonly StackPanel _top = new();
+    private readonly StackPanel _bottom = new();
     private Button? _active;
 
     public ActivityBar()
@@ -21,19 +22,30 @@ public class ActivityBar : Border
         Background = Theme.ActivityBar;
         BorderBrush = Theme.Border;
         BorderThickness = new Thickness(0, 0, 1, 0);
-        Child = _panel;
+
+        var dock = new DockPanel();
+        DockPanel.SetDock(_bottom, Dock.Bottom);
+        dock.Children.Add(_bottom);
+        dock.Children.Add(_top);
+        Child = dock;
 
         AddLogo();
 
-        Button explorer = AddButton("explorer", "explorer", "Explorateur");
-        AddButton("search", "search", "Recherche");
-        AddTextButton("home", "⌂", "Accueil");
-        AddTextButton("settings", "⚙", "Paramètres");
+        Button explorer = AddSvgButton("explorer", "explorer", "Explorateur");
+        AddSvgButton("search", "search", "Recherche");
+        AddTextButton(_top, "git", "⎇", "Contrôle de code source");
+        AddTextButton(_top, "run", "▷", "Exécuter et déboguer");
+        AddTextButton(_top, "extensions", "⊞", "Extensions");
+        AddTextButton(_top, "test", "⚗", "Test");
+        AddTextButton(_top, "home", "⌂", "Accueil");
+
+        AddTextButton(_bottom, "account", "☺", "Compte");
+        AddTextButton(_bottom, "settings", "⚙", "Paramètres");
 
         Select(explorer);
     }
 
-    /// <summary>Logo K en haut de la barre (non cliquable, ne déclenche aucune vue).</summary>
+    /// <summary>Logo K en haut de la barre (non cliquable).</summary>
     private void AddLogo()
     {
         try
@@ -46,15 +58,15 @@ public class ActivityBar : Border
             bitmap.BeginInit();
             bitmap.UriSource = new Uri(path, UriKind.Absolute);
             bitmap.CacheOption = BitmapCacheOption.OnLoad;
-            bitmap.DecodePixelWidth = 64;
+            bitmap.DecodePixelWidth = 80;
             bitmap.EndInit();
             bitmap.Freeze();
 
-            _panel.Children.Add(new Image
+            _top.Children.Add(new Image
             {
                 Source = bitmap,
-                Width = 30,
-                Height = 30,
+                Width = 38,
+                Height = 38,
                 Margin = new Thickness(0, 12, 0, 12),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 ToolTip = "KEYCE KODER"
@@ -66,47 +78,33 @@ public class ActivityBar : Border
         }
     }
 
-    private Button AddButton(string id, string icon, string tooltip)
+    private Button AddSvgButton(string id, string icon, string tooltip)
     {
-        var button = new Button
-        {
-            Content = SvgIconFactory.Create(icon, 21),
-            ToolTip = tooltip,
-            Tag = id,
-            Height = 52,
-            Width = 52,
-            Margin = new Thickness(0),
-            Background = Brushes.Transparent,
-            BorderThickness = new Thickness(0),
-            HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalContentAlignment = VerticalAlignment.Center,
-            Cursor = Cursors.Hand
-        };
-
-        button.MouseEnter += (_, _) =>
-        {
-            if (button != _active) button.Background = Theme.Surface;
-        };
-        button.MouseLeave += (_, _) =>
-        {
-            if (button != _active) button.Background = Brushes.Transparent;
-        };
-        button.Click += (_, _) => Select(button);
-        _panel.Children.Add(button);
+        Button button = CreateButton(id, SvgIconFactory.Create(icon, 21), tooltip);
+        _top.Children.Add(button);
         return button;
     }
 
-    private Button AddTextButton(string id, string text, string tooltip)
+    private Button AddTextButton(Panel target, string id, string glyph, string tooltip)
+    {
+        var content = new TextBlock
+        {
+            Text = glyph,
+            Foreground = Theme.Muted,
+            FontFamily = new FontFamily("Segoe UI Symbol"),
+            FontSize = 20,
+            TextAlignment = TextAlignment.Center
+        };
+        Button button = CreateButton(id, content, tooltip);
+        target.Children.Add(button);
+        return button;
+    }
+
+    private Button CreateButton(string id, object content, string tooltip)
     {
         var button = new Button
         {
-            Content = new TextBlock
-            {
-                Text = text,
-                Foreground = Theme.Muted,
-                FontSize = 20,
-                TextAlignment = TextAlignment.Center
-            },
+            Content = content,
             ToolTip = tooltip,
             Tag = id,
             Height = 52,
@@ -128,7 +126,6 @@ public class ActivityBar : Border
             if (button != _active) button.Background = Brushes.Transparent;
         };
         button.Click += (_, _) => Select(button);
-        _panel.Children.Add(button);
         return button;
     }
 
