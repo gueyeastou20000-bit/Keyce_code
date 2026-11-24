@@ -104,9 +104,29 @@ public sealed class EditorTab
 
     private void ApplyThemeColors()
     {
-        Editor.InnerEditor.Background = Theme.Editor;
+        Editor.InnerEditor.Background = GetEditorBackgroundBrush();
         Editor.InnerEditor.Foreground = Theme.Text;
         Editor.InnerEditor.LineNumbersForeground = Theme.Muted;
+    }
+
+    /// <summary>
+    /// Récupère le pinceau de fond de l'éditeur de code (fond personnalisé s'il est configuré, sinon fond du thème actif).
+    /// </summary>
+    public static Brush GetEditorBackgroundBrush()
+    {
+        if (!string.IsNullOrWhiteSpace(AppSettings.Current.CustomEditorBackground))
+        {
+            try
+            {
+                var color = (Color)ColorConverter.ConvertFromString(AppSettings.Current.CustomEditorBackground);
+                return new SolidColorBrush(color);
+            }
+            catch
+            {
+                // En cas de code couleur hex invalide, repli sur le fond par défaut du thème
+            }
+        }
+        return Theme.Editor;
     }
 
     public void RefreshHeader()

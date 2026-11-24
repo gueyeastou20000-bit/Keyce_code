@@ -25,6 +25,11 @@ public sealed class AppSettings
     // 1. Apparence
     public string ThemeName { get; set; } = "midnight-orange";
 
+    /// <summary>
+    /// Couleur d'arrière-plan personnalisée pour la zone d'édition du code (null = fond du thème actif).
+    /// </summary>
+    public string? CustomEditorBackground { get; set; }
+
     // 2. Police de l'éditeur
     public string EditorFontFamily { get; set; } = "Cascadia Code, Consolas";
     public double EditorFontSize { get; set; } = 14.0;

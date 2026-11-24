@@ -87,24 +87,28 @@ public class ExplorerView : DockPanel
 
         var refreshButton = new Button
         {
-            Content = SvgIconFactory.Create("refresh", 15),
-            ToolTip = "Actualiser",
-            Width = 28,
-            Height = 28,
+            Content = SvgIconFactory.Create("refresh", 12),
+            ToolTip = "Actualiser l'explorateur",
+            Width = 22,
+            Height = 22,
             Padding = new Thickness(0),
             Background = Brushes.Transparent,
             Foreground = Theme.Muted,
             BorderThickness = new Thickness(0),
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
-            Cursor = Cursors.Hand
+            Cursor = Cursors.Hand,
+            Margin = new Thickness(4, 0, 0, 0)
         };
 
+        refreshButton.MouseEnter += (_, _) => refreshButton.Background = Theme.SurfaceHover;
+        refreshButton.MouseLeave += (_, _) => refreshButton.Background = Brushes.Transparent;
         refreshButton.Click += (_, _) => Refresh();
 
         var header = new DockPanel
         {
-            Margin = new Thickness(6, 0, 6, 6)
+            Margin = new Thickness(8, 2, 8, 6),
+            VerticalAlignment = VerticalAlignment.Center
         };
 
         DockPanel.SetDock(refreshButton, Dock.Right);

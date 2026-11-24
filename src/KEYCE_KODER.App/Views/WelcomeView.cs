@@ -11,6 +11,12 @@ using KEYCE_KODER.App.Services;
 
 namespace KEYCE_KODER.App.Views;
 
+/// <summary>
+/// Page d'accueil moderne de KEYCE KODER :
+/// Présentation obligatoire en deux colonnes :
+/// - Colonne gauche : Logo KEYCE KODER de grande taille, visuellement dominant.
+/// - Colonne droite : Titre de bienvenue, actions réelles (Projet, Fichier, Dossier) et projets récents.
+/// </summary>
 public sealed class WelcomeView : Border
 {
     public event Action? NewFileRequested;
@@ -20,16 +26,24 @@ public sealed class WelcomeView : Border
     public event Action<string>? OpenRecentFolderRequested;
 
     private readonly StackPanel _recentList = new();
+    private readonly TextBlock _welcomeTitle = new();
+    private readonly TextBlock _welcomeSubtitle = new();
+    private readonly TextBlock _actionsSectionTitle = new();
+    private readonly TextBlock _recentsSectionTitle = new();
 
     public WelcomeView()
     {
         Background = Theme.Editor;
-        Padding = new Thickness(32, 24, 32, 24);
+        Padding = new Thickness(40, 24, 40, 24);
 
         // Réaction dynamique au thème
         Theme.ThemeChanged += _ =>
         {
             Background = Theme.Editor;
+            _welcomeTitle.Foreground = Theme.Text;
+            _welcomeSubtitle.Foreground = Theme.Muted;
+            _actionsSectionTitle.Foreground = Theme.Accent;
+            _recentsSectionTitle.Foreground = Theme.Accent;
             RefreshRecentProjects();
         };
 
@@ -39,18 +53,28 @@ public sealed class WelcomeView : Border
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
         };
 
-        var container = new StackPanel
+        // Conteneur principal centré horizontalement et verticalement
+        var mainGrid = new Grid
         {
-            MaxWidth = 720,
+            MaxWidth = 960,
             HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(16, 24, 16, 24)
         };
 
-        // --- En-tête : Logo et Titres ---
-        var headerSp = new StackPanel
+        // Deux colonnes : Gauche = Logo dominant | Droite = Titre + Actions + Récents
+        mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(320) });
+        mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(48) }); // Séparation visuelle
+        mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        // =========================================================================
+        // COLONNE GAUCHE : UNIQUEMENT LE LOGO KEYCE KODER (GRAND ET DOMINANT)
+        // =========================================================================
+        var logoHost = new Border
         {
             HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 0, 0, 32)
+            VerticalAlignment = VerticalAlignment.Center,
+            Padding = new Thickness(16)
         };
 
         try
@@ -65,121 +89,91 @@ public sealed class WelcomeView : Border
                 bitmap.BeginInit();
                 bitmap.UriSource = new Uri(Path.GetFullPath(logoPath), UriKind.Absolute);
                 bitmap.CacheOption = BitmapCacheOption.OnLoad;
-                bitmap.DecodePixelWidth = 100;
+                bitmap.DecodePixelWidth = 512;
                 bitmap.EndInit();
                 bitmap.Freeze();
 
-                headerSp.Children.Add(new Image
+                var logoImage = new Image
                 {
                     Source = bitmap,
-                    Width = 54,
-                    Height = 54,
-                    Margin = new Thickness(0, 0, 0, 12),
-                    HorizontalAlignment = HorizontalAlignment.Center
-                });
+                    Width = 240,
+                    Height = 240,
+                    Stretch = Stretch.Uniform,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+
+                logoHost.Child = logoImage;
             }
         }
         catch
         {
-            // Pas de logo
+            // Repli gracieux en cas d'absence du logo
         }
 
-        headerSp.Children.Add(new TextBlock
+        Grid.SetColumn(logoHost, 0);
+        mainGrid.Children.Add(logoHost);
+
+        // =========================================================================
+        // COLONNE DROITE : TITRE + ACTIONS + PROJETS RÉCENTS
+        // =========================================================================
+        var rightColumn = new StackPanel
         {
-            Text = "KEYCE KODER",
-            FontSize = 26,
-            FontWeight = FontWeights.Bold,
-            Foreground = Theme.Text,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 0, 0, 4)
-        });
-
-        headerSp.Children.Add(new TextBlock
-        {
-            Text = "Environnement de développement & Éditeur de code WPF / .NET 10",
-            FontSize = 13,
-            Foreground = Theme.Muted,
-            HorizontalAlignment = HorizontalAlignment.Center
-        });
-
-        container.Children.Add(headerSp);
-
-        // --- Corps à deux colonnes : Commencer / Récents ---
-        var bodyGrid = new Grid();
-        bodyGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        bodyGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) }); // Espace
-        bodyGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-        // Colonne gauche : Démarrer
-        var leftSp = new StackPanel();
-        leftSp.Children.Add(new TextBlock
-        {
-            Text = "COMMENCER",
-            FontSize = 12,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = Theme.Accent,
-            Margin = new Thickness(0, 0, 0, 12)
-        });
-
-        leftSp.Children.Add(MakeActionButton("Nouveau fichier", "Ctrl+N", "file", () => NewFileRequested?.Invoke()));
-        leftSp.Children.Add(MakeActionButton("Ouvrir un fichier…", "Ctrl+O", "file", () => OpenFileRequested?.Invoke()));
-        leftSp.Children.Add(MakeActionButton("Ouvrir un dossier / projet…", "", "folder", () => OpenFolderRequested?.Invoke()));
-        leftSp.Children.Add(MakeActionButton("Nouveau dossier…", "", "folder", () => NewFolderRequested?.Invoke()));
-
-        Grid.SetColumn(leftSp, 0);
-        bodyGrid.Children.Add(leftSp);
-
-        // Colonne droite : Projets récents
-        var rightSp = new StackPanel();
-        rightSp.Children.Add(new TextBlock
-        {
-            Text = "PROJETS RÉCENTS",
-            FontSize = 12,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = Theme.Accent,
-            Margin = new Thickness(0, 0, 0, 12)
-        });
-
-        _recentList.Margin = new Thickness(0, 0, 0, 8);
-        rightSp.Children.Add(_recentList);
-
-        Grid.SetColumn(rightSp, 2);
-        bodyGrid.Children.Add(rightSp);
-
-        container.Children.Add(bodyGrid);
-
-        // --- Raccourcis utiles en bas ---
-        var shortcutBorder = new Border
-        {
-            Background = Theme.Surface,
-            BorderBrush = Theme.Border,
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(16, 12, 16, 12),
-            Margin = new Thickness(0, 32, 0, 0)
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Stretch
         };
 
-        var shGrid = new Grid();
-        shGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        shGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        // 1. En-tête : Titre de bienvenue & Sous-titre
+        _welcomeTitle.Text = "Bienvenue dans KEYCE KODER";
+        _welcomeTitle.FontSize = 26;
+        _welcomeTitle.FontWeight = FontWeights.Bold;
+        _welcomeTitle.Foreground = Theme.Text;
+        _welcomeTitle.Margin = new Thickness(0, 0, 0, 4);
 
-        var shLeft = new StackPanel();
-        shLeft.Children.Add(MakeShortcutRow("Recherche globale", "Ctrl + K"));
-        shLeft.Children.Add(MakeShortcutRow("Afficher / Masquer la barre latérale", "Ctrl + B"));
+        _welcomeSubtitle.Text = "Environnement de développement & Éditeur de code C# / .NET 10";
+        _welcomeSubtitle.FontSize = 13;
+        _welcomeSubtitle.Foreground = Theme.Muted;
+        _welcomeSubtitle.Margin = new Thickness(0, 0, 0, 24);
 
-        var shRight = new StackPanel();
-        shRight.Children.Add(MakeShortcutRow("Exécuter le fichier actif (Run)", "F5"));
-        shRight.Children.Add(MakeShortcutRow("Assistant IA Copilot", "Ctrl + I"));
+        rightColumn.Children.Add(_welcomeTitle);
+        rightColumn.Children.Add(_welcomeSubtitle);
 
-        Grid.SetColumn(shLeft, 0);
-        Grid.SetColumn(shRight, 1);
-        shGrid.Children.Add(shLeft);
-        shGrid.Children.Add(shRight);
+        // 2. Section COMMENCER (Actions réelles avec icônes SVG)
+        _actionsSectionTitle.Text = "COMMENCER";
+        _actionsSectionTitle.FontSize = 11;
+        _actionsSectionTitle.FontWeight = FontWeights.SemiBold;
+        _actionsSectionTitle.Foreground = Theme.Accent;
+        _actionsSectionTitle.Margin = new Thickness(0, 0, 0, 10);
+        rightColumn.Children.Add(_actionsSectionTitle);
 
-        shortcutBorder.Child = shGrid;
-        container.Children.Add(shortcutBorder);
+        rightColumn.Children.Add(MakeActionButton("Ouvrir un projet…", "", "folder", () => OpenFolderRequested?.Invoke()));
+        rightColumn.Children.Add(MakeActionButton("Ouvrir un fichier…", "Ctrl+O", "file", () => OpenFileRequested?.Invoke()));
+        rightColumn.Children.Add(MakeActionButton("Créer un dossier…", "", "folder", () => NewFolderRequested?.Invoke()));
+        rightColumn.Children.Add(MakeActionButton("Créer un fichier", "Ctrl+N", "file", () => NewFileRequested?.Invoke()));
 
-        scroll.Content = container;
+        // 3. Section PROJETS RÉCENTS
+        _recentsSectionTitle.Text = "PROJETS RÉCENTS";
+        _recentsSectionTitle.FontSize = 11;
+        _recentsSectionTitle.FontWeight = FontWeights.SemiBold;
+        _recentsSectionTitle.Foreground = Theme.Accent;
+        _recentsSectionTitle.Margin = new Thickness(0, 20, 0, 10);
+        rightColumn.Children.Add(_recentsSectionTitle);
+
+        _recentList.Margin = new Thickness(0, 0, 0, 16);
+        rightColumn.Children.Add(_recentList);
+
+        // 4. Barre de raccourcis essentiels
+        var shortcutRow = new WrapPanel { Margin = new Thickness(0, 8, 0, 0) };
+        shortcutRow.Children.Add(MakeShortcutBadge("Recherche", "Ctrl+K"));
+        shortcutRow.Children.Add(MakeShortcutBadge("Barre latérale", "Ctrl+B"));
+        shortcutRow.Children.Add(MakeShortcutBadge("Run / Debug", "F5"));
+        shortcutRow.Children.Add(MakeShortcutBadge("Assistant IA", "Ctrl+I"));
+        rightColumn.Children.Add(shortcutRow);
+
+        Grid.SetColumn(rightColumn, 2);
+        mainGrid.Children.Add(rightColumn);
+
+        scroll.Content = mainGrid;
         Child = scroll;
 
         RefreshRecentProjects();
@@ -193,7 +187,7 @@ public sealed class WelcomeView : Border
             BorderBrush = Theme.Border,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(6),
-            Height = 38,
+            Height = 36,
             Margin = new Thickness(0, 0, 0, 8),
             Padding = new Thickness(12, 0, 12, 0),
             Cursor = Cursors.Hand
@@ -216,7 +210,7 @@ public sealed class WelcomeView : Border
 
         var sp = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         var iconElem = SvgIconFactory.Create(icon, 15);
-        iconElem.Margin = new Thickness(0, 0, 8, 0);
+        iconElem.Margin = new Thickness(0, 0, 10, 0);
         sp.Children.Add(iconElem);
 
         sp.Children.Add(new TextBlock
@@ -249,39 +243,47 @@ public sealed class WelcomeView : Border
         {
             _recentList.Children.Add(new TextBlock
             {
-                Text = "Aucun dossier ou projet récent.",
+                Text = "Aucun projet récent pour le moment.",
                 Foreground = Theme.Muted,
+                FontStyle = FontStyles.Italic,
                 FontSize = 12,
-                Margin = new Thickness(0, 4, 0, 4)
+                Margin = new Thickness(4, 2, 0, 4)
             });
             return;
         }
 
-        foreach (var path in recents.Take(6))
+        foreach (var path in recents.Take(5))
         {
             string folderName = Path.GetFileName(path);
             if (string.IsNullOrEmpty(folderName)) folderName = path;
 
-            var btn = new Button
+            var itemBorder = new Border
             {
                 Background = Brushes.Transparent,
                 BorderThickness = new Thickness(0),
+                CornerRadius = new CornerRadius(6),
                 Cursor = Cursors.Hand,
-                Padding = new Thickness(6, 6, 6, 6),
-                Margin = new Thickness(0, 0, 0, 4),
-                HorizontalContentAlignment = HorizontalAlignment.Stretch
+                Padding = new Thickness(8, 6, 8, 6),
+                Margin = new Thickness(0, 0, 0, 4)
             };
 
-            var sp = new StackPanel();
-            sp.Children.Add(new TextBlock
+            var dock = new DockPanel();
+            var iconElem = SvgIconFactory.Create("folder", 14);
+            iconElem.Margin = new Thickness(0, 0, 8, 0);
+            iconElem.VerticalAlignment = VerticalAlignment.Center;
+            DockPanel.SetDock(iconElem, Dock.Left);
+            dock.Children.Add(iconElem);
+
+            var textSp = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            textSp.Children.Add(new TextBlock
             {
                 Text = folderName,
                 Foreground = Theme.Text,
-                FontSize = 13,
+                FontSize = 12,
                 FontWeight = FontWeights.SemiBold
             });
 
-            sp.Children.Add(new TextBlock
+            textSp.Children.Add(new TextBlock
             {
                 Text = path,
                 Foreground = Theme.Muted,
@@ -289,49 +291,38 @@ public sealed class WelcomeView : Border
                 TextTrimming = TextTrimming.CharacterEllipsis
             });
 
-            btn.Content = sp;
-            btn.MouseEnter += (_, _) => btn.Background = Theme.SurfaceHover;
-            btn.MouseLeave += (_, _) => btn.Background = Brushes.Transparent;
-            btn.Click += (_, _) => OpenRecentFolderRequested?.Invoke(path);
+            dock.Children.Add(textSp);
+            itemBorder.Child = dock;
 
-            _recentList.Children.Add(btn);
+            itemBorder.MouseEnter += (_, _) => itemBorder.Background = Theme.SurfaceHover;
+            itemBorder.MouseLeave += (_, _) => itemBorder.Background = Brushes.Transparent;
+            itemBorder.MouseLeftButtonUp += (_, e) =>
+            {
+                e.Handled = true;
+                OpenRecentFolderRequested?.Invoke(path);
+            };
+
+            _recentList.Children.Add(itemBorder);
         }
     }
 
-    private static Grid MakeShortcutRow(string name, string key)
+    private static Border MakeShortcutBadge(string label, string keys)
     {
-        var g = new Grid { Margin = new Thickness(0, 3, 0, 3) };
-        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        var nameBlock = new TextBlock
+        var border = new Border
         {
-            Text = name,
-            Foreground = Theme.Text,
-            FontSize = 12,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        Grid.SetColumn(nameBlock, 0);
-        g.Children.Add(nameBlock);
-
-        var keyBadge = new Border
-        {
-            Background = Theme.Editor,
+            Background = Theme.Surface,
             BorderBrush = Theme.Border,
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(3),
-            Padding = new Thickness(5, 1, 5, 1)
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(8, 3, 8, 3),
+            Margin = new Thickness(0, 0, 8, 6)
         };
-        keyBadge.Child = new TextBlock
-        {
-            Text = key,
-            Foreground = Theme.Accent,
-            FontSize = 11,
-            FontWeight = FontWeights.SemiBold
-        };
-        Grid.SetColumn(keyBadge, 1);
-        g.Children.Add(keyBadge);
 
-        return g;
+        var sp = new StackPanel { Orientation = Orientation.Horizontal };
+        sp.Children.Add(new TextBlock { Text = label + " : ", Foreground = Theme.Muted, FontSize = 11 });
+        sp.Children.Add(new TextBlock { Text = keys, Foreground = Theme.Accent, FontWeight = FontWeights.SemiBold, FontSize = 11 });
+        border.Child = sp;
+
+        return border;
     }
 }

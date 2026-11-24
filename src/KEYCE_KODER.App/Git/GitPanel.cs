@@ -131,10 +131,11 @@ public sealed class GitPanel : DockPanel
         _branchButton.Background = Theme.Surface;
         _branchButton.Click += async (_, _) => await ShowBranchMenuAsync();
 
-        _refreshButton = FlatButton("⟳", "Actualiser");
-        _refreshButton.Width = 30;
-        _refreshButton.FontSize = 15;
-        _refreshButton.Margin = new Thickness(6, 0, 0, 0);
+        _refreshButton = FlatButton(Views.SvgIconFactory.Create("refresh", 13), "Actualiser");
+        _refreshButton.Width = 24;
+        _refreshButton.Height = 24;
+        _refreshButton.Padding = new Thickness(0);
+        _refreshButton.Margin = new Thickness(4, 0, 0, 0);
         _refreshButton.Click += async (_, _) => await RefreshAsync();
 
         var branchRow = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
@@ -1443,7 +1444,7 @@ public sealed class GitPanel : DockPanel
 
     private Window Owner() => Window.GetWindow(this) ?? Application.Current.MainWindow;
 
-    private static Button FlatButton(string content, string? toolTip)
+    private static Button FlatButton(object content, string? toolTip)
     {
         return new Button
         {

@@ -389,6 +389,8 @@ public sealed class SettingsWindow : Window
         _contentPanel.Children.Add(combo);
         _contentPanel.Children.Add(new TextBlock { Text = "Prévisualisation du thème en direct :", Foreground = Theme.Muted, Margin = new Thickness(0, 0, 0, 6) });
         _contentPanel.Children.Add(previewBorder);
+
+        AddEditorBackgroundCustomization();
     }
 
     private void BuildEditorOptions()
@@ -404,6 +406,184 @@ public sealed class SettingsWindow : Window
         AddSection("Saisie intelligente");
         AddCheckbox("Fermeture automatique des parenthèses et guillemets", _settings.AutoCloseBrackets, v => _settings.AutoCloseBrackets = v);
         AddCheckbox("Indentation automatique intelligente", _settings.AutoIndent, v => _settings.AutoIndent = v);
+
+        AddEditorBackgroundCustomization();
+    }
+
+    private void AddEditorBackgroundCustomization()
+    {
+        AddSection("Fond personnalisé de l'éditeur de code");
+
+        _contentPanel.Children.Add(new TextBlock
+        {
+            Text = "Personnalisez indépendamment la couleur d'arrière-plan de la zone de code. Cette option n'affecte ni le terminal, ni l'explorateur, ni les autres panneaux.",
+            Foreground = Theme.Muted,
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 10)
+        });
+
+        // Statut actuel
+        var statusText = new TextBlock
+        {
+            Text = string.IsNullOrEmpty(_settings.CustomEditorBackground)
+                ? "État : Fond par défaut du thème actif"
+                : $"État : Fond personnalisé actif ({_settings.CustomEditorBackground})",
+            Foreground = string.IsNullOrEmpty(_settings.CustomEditorBackground) ? Theme.Muted : Theme.Accent,
+            FontWeight = FontWeights.SemiBold,
+            FontSize = 12,
+            Margin = new Thickness(0, 0, 0, 10)
+        };
+        _contentPanel.Children.Add(statusText);
+
+        // Zone de prévisualisation de code
+        var codePreviewBorder = new Border
+        {
+            Background = Tabs.EditorTab.GetEditorBackgroundBrush(),
+            BorderBrush = Theme.Border,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(12, 10, 12, 10),
+            Margin = new Thickness(0, 0, 0, 12),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Width = 440
+        };
+
+        var codeSp = new StackPanel();
+        codeSp.Children.Add(new TextBlock { Text = "1   def saluer(nom):", Foreground = new SolidColorBrush(Color.FromRgb(220, 220, 170)), FontFamily = new FontFamily("Consolas"), FontSize = 12 });
+        codeSp.Children.Add(new TextBlock { Text = "2       print(f\"Bonjour {nom} !\")", Foreground = new SolidColorBrush(Color.FromRgb(206, 145, 120)), FontFamily = new FontFamily("Consolas"), FontSize = 12 });
+        codeSp.Children.Add(new TextBlock { Text = "3   saluer(\"KEYCE KODER\")", Foreground = Theme.Text, FontFamily = new FontFamily("Consolas"), FontSize = 12 });
+        codePreviewBorder.Child = codeSp;
+        _contentPanel.Children.Add(codePreviewBorder);
+
+        // Palette de présélections rapides
+        _contentPanel.Children.Add(new TextBlock
+        {
+            Text = "Couleurs prédéfinies :",
+            Foreground = Theme.Muted,
+            FontSize = 11,
+            Margin = new Thickness(0, 0, 0, 6)
+        });
+
+        var presets = new (string Color, string Name)[]
+        {
+            ("#0A1324", "Bleu Nuit (Astou)"),
+            ("#1E1E1E", "Dark VS Code"),
+            ("#141E30", "Deep Navy"),
+            ("#181824", "Dark Charcoal"),
+            ("#282C34", "One Dark"),
+            ("#272822", "Monokai"),
+            ("#121212", "Noir Mat"),
+            ("#000000", "Noir Absolu"),
+            ("#F8F9FA", "Clair")
+        };
+
+        var palettePanel = new WrapPanel { Margin = new Thickness(0, 0, 0, 10) };
+        var hexInput = new TextBox
+        {
+            Text = _settings.CustomEditorBackground ?? "",
+            Width = 120,
+            Height = 28,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Background = Theme.Surface,
+            Foreground = Theme.Text,
+            BorderBrush = Theme.Border,
+            BorderThickness = new Thickness(1),
+            Margin = new Thickness(0, 0, 8, 0)
+        };
+
+        void ApplyNewEditorBg(string? hex)
+        {
+            _settings.CustomEditorBackground = hex;
+            Brush brush;
+            if (string.IsNullOrWhiteSpace(hex))
+            {
+                brush = Theme.Editor;
+                statusText.Text = "État : Fond par défaut du thème actif";
+                statusText.Foreground = Theme.Muted;
+                hexInput.Text = "";
+            }
+            else
+            {
+                try
+                {
+                    var c = (Color)ColorConverter.ConvertFromString(hex);
+                    brush = new SolidColorBrush(c);
+                    statusText.Text = $"État : Fond personnalisé actif ({hex})";
+                    statusText.Foreground = Theme.Accent;
+                    hexInput.Text = hex;
+                }
+                catch
+                {
+                    brush = Theme.Editor;
+                }
+            }
+            codePreviewBorder.Background = brush;
+            _onApply?.Invoke(_settings);
+        }
+
+        foreach (var p in presets)
+        {
+            Color c;
+            try { c = (Color)ColorConverter.ConvertFromString(p.Color); } catch { continue; }
+            var swatch = new Border
+            {
+                Width = 26,
+                Height = 26,
+                Background = new SolidColorBrush(c),
+                BorderBrush = Theme.Border,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4),
+                Margin = new Thickness(0, 0, 8, 8),
+                Cursor = Cursors.Hand,
+                ToolTip = p.Name
+            };
+            swatch.MouseLeftButtonUp += (_, _) => ApplyNewEditorBg(p.Color);
+            palettePanel.Children.Add(swatch);
+        }
+        _contentPanel.Children.Add(palettePanel);
+
+        // Saisie manuelle de couleur Hex + boutons
+        var actionRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 16) };
+        actionRow.Children.Add(new TextBlock { Text = "Code Hex : ", Foreground = Theme.Muted, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 4, 0) });
+        actionRow.Children.Add(hexInput);
+
+        var applyHexBtn = new Button
+        {
+            Content = "Appliquer",
+            Height = 28,
+            Padding = new Thickness(10, 0, 10, 0),
+            Background = Theme.Surface,
+            Foreground = Theme.Text,
+            BorderBrush = Theme.Border,
+            BorderThickness = new Thickness(1),
+            Cursor = Cursors.Hand,
+            Margin = new Thickness(0, 0, 8, 0)
+        };
+        applyHexBtn.Click += (_, _) =>
+        {
+            string val = hexInput.Text.Trim();
+            if (!string.IsNullOrEmpty(val) && !val.StartsWith("#") && (val.Length == 6 || val.Length == 8))
+                val = "#" + val;
+            ApplyNewEditorBg(val);
+        };
+        actionRow.Children.Add(applyHexBtn);
+
+        var resetBtn = new Button
+        {
+            Content = "Rétablir le fond par défaut du thème",
+            Height = 28,
+            Padding = new Thickness(10, 0, 10, 0),
+            Background = Theme.Surface,
+            Foreground = Theme.Muted,
+            BorderBrush = Theme.Border,
+            BorderThickness = new Thickness(1),
+            Cursor = Cursors.Hand
+        };
+        resetBtn.Click += (_, _) => ApplyNewEditorBg(null);
+        actionRow.Children.Add(resetBtn);
+
+        _contentPanel.Children.Add(actionRow);
     }
 
     private void BuildFontOptions()
