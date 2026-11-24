@@ -24,6 +24,7 @@ public class ActivityBar : Border
         AddButton("explorer", "explorer", "Explorateur");
         AddButton("search", "search", "Recherche");
         AddButton("git", "git", "Contrôle de source (Git)");
+        AddButton("debug", "debug", "Exécuter et déboguer (Ctrl+Maj+D)");
         AddTextButton("home", "⌂", "Accueil");
         AddTextButton("settings", "⚙", "Paramètres");
 
@@ -92,6 +93,19 @@ public class ActivityBar : Border
         };
         button.Click += (_, _) => Select(button);
         _panel.Children.Add(button);
+    }
+
+    /// <summary>Affiche une vue depuis le code (ex. « debug » au démarrage du débogage).</summary>
+    public void SelectView(string id)
+    {
+        foreach (UIElement child in _panel.Children)
+        {
+            if (child is Button { Tag: string tag } button && tag == id)
+            {
+                Select(button);
+                return;
+            }
+        }
     }
 
     private void Select(Button button)

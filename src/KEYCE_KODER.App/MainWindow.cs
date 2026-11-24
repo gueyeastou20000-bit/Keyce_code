@@ -26,6 +26,8 @@ using KEYCE_KODER.App.Tabs;
 using KEYCE_KODER.App.Search;
 using KEYCE_KODER.App.Tools;
 using KEYCE_KODER.App.Pdf;
+using KEYCE_KODER.App.Debugging;
+using KEYCE_KODER.Runner.Debugging;
 
 namespace KEYCE_KODER.App;
 
@@ -41,6 +43,10 @@ public class MainWindow : Window
     private readonly EditorStatusBar _statusBar;
     private FindReplaceWindow? _findReplaceWindow;
     private ToolsWindow? _toolsWindow;
+
+    // Débogueur (points d'arrêt, pas à pas, variables...)
+    private readonly BreakpointStore _breakpoints = new();
+    private readonly DebugController _debugger;
 
     // Lecteurs PDF ouverts (un onglet par PDF)
     private readonly List<PdfViewer> _pdfViewers = new();
@@ -158,6 +164,33 @@ public class MainWindow : Window
         // Navigation entre les vues
         activityBar.ViewSelected += sidebar.ShowView;
 
+        // Terminal : clic sur la branche Git de l'invite → vue Contrôle de source
+        _bottomPanel.GitViewRequested += () => activityBar.SelectView("git");
+
+        // Débogueur : vue « Exécuter et déboguer » + onglet « CONSOLE DE DÉBOGAGE »
+        var debugView = new DebugView();
+        var debugConsole = new DebugConsole();
+        sidebar.AddView("debug", "EXÉCUTER ET DÉBOGUER", debugView);
+        _bottomPanel.SetDebugConsole(debugConsole);
+
+        _debugger = new DebugController(
+            this,
+            _tabManager,
+            _fileActions,
+            _breakpoints,
+            debugView,
+            debugConsole,
+            PrepareScriptAsync,
+            () =>
+            {
+                activityBar.SelectView("debug");
+                _bottomPanel.ShowDebugConsole();
+            });
+
+        // Chaque onglet de code reçoit la marge des points d'arrêt
+        _debugger.AttachEditors();
+        _tabManager.ActiveTabChanged += (_, _) => _debugger.AttachEditors();
+
         // Ouverture des fichiers depuis l'Explorateur
         sidebar.Explorer.FileOpenRequested +=
     path => _ = _fileActions.OpenPathAsync(path);
@@ -261,16 +294,36 @@ public class MainWindow : Window
             Key.B,
             ModifierKeys.Control));
 
-        // F5 : exécuter le fichier actif / Maj+F5 : arrêter
-        InputBindings.Add(new KeyBinding(
-            new RelayCommand(_bottomPanel.RequestRun),
-            Key.F5,
-            ModifierKeys.None));
+        // Débogage (comme VS Code) :
+        // F5 = déboguer (Python) ou continuer, Ctrl+F5 = exécuter sans débogage (Run),
+        // Maj+F5 = arrêter, Ctrl+Maj+F5 = redémarrer, F6 = pause, F9 = point d'arrêt,
+        // F10 = pas à pas principal, F11 = pas à pas détaillé, Maj+F11 = pas à pas sortant
+        AddShortcut(() => _ = OnF5Async(), Key.F5, ModifierKeys.None);
+        AddShortcut(_bottomPanel.RequestRun, Key.F5, ModifierKeys.Control);
+        AddShortcut(() =>
+        {
+            if (_debugger.IsActive)
+                _debugger.Stop();
+            else
+                _bottomPanel.RequestStop();
+        }, Key.F5, ModifierKeys.Shift);
+        AddShortcut(() => _ = _debugger.RestartAsync(), Key.F5, ModifierKeys.Control | ModifierKeys.Shift);
+        AddShortcut(_debugger.Pause, Key.F6, ModifierKeys.None);
+        AddShortcut(_debugger.ToggleBreakpointAtCaret, Key.F9, ModifierKeys.None);
+        AddShortcut(_debugger.StepInto, Key.F11, ModifierKeys.None);
+        AddShortcut(_debugger.StepOut, Key.F11, ModifierKeys.Shift);
+        AddShortcut(() => activityBar.SelectView("debug"), Key.D, ModifierKeys.Control | ModifierKeys.Shift);
 
-        InputBindings.Add(new KeyBinding(
-            new RelayCommand(_bottomPanel.RequestStop),
-            Key.F5,
-            ModifierKeys.Shift));
+        // F10 est une touche « système » pour Windows (elle active le menu) : on l'intercepte à part
+        PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key == Key.System && e.SystemKey == Key.F10
+                && Keyboard.Modifiers == ModifierKeys.None && _debugger.IsActive)
+            {
+                e.Handled = true;
+                _debugger.StepOver();
+            }
+        };
 
 
 
@@ -303,6 +356,27 @@ public class MainWindow : Window
 
         // Fermeture propre : plus aucun processus Python ou shell orphelin
         Closing += OnWindowClosing;
+    }
+
+    /// <summary>
+    /// F5 : continue si le débogueur est en pause ; sinon débogue le fichier Python actif
+    /// (ou un document sans titre, exécuté comme du Python) ; les autres langages sont exécutés avec Run.
+    /// </summary>
+    private async Task OnF5Async()
+    {
+        if (_debugger.IsActive)
+        {
+            _debugger.Continue();
+            return;
+        }
+
+        EditorTab? tab = _tabManager.ActiveTab;
+        string? path = tab?.Document.FilePath;
+
+        if (tab is not null && (path is null || PythonDebugSession.Supports(path)))
+            await _debugger.StartAsync();
+        else
+            _bottomPanel.RequestRun();
     }
 
     /// <summary>
@@ -589,6 +663,7 @@ public class MainWindow : Window
         }
 
         // Fermeture confirmée : plus aucun processus Python ou shell orphelin
+        _debugger.Stop();
         _runner.Stop();
         _terminal.Dispose();
 
