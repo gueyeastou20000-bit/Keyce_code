@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/KEYCE_KODER.AI/KEYCE_KODER.AI.csproj" />
     <Project Path="src/KEYCE_KODER.Analysis/KEYCE_KODER.Analysis.csproj" />
     <Project Path="src/KEYCE_KODER.App/KEYCE_KODER.App.csproj" />
     <Project Path="src/KEYCE_KODER.Core/KEYCE_KODER.Core.csproj" />

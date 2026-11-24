@@ -13,6 +13,7 @@
     <ProjectReference Include="..\KEYCE_KODER.Editor\KEYCE_KODER.Editor.csproj" />
     <ProjectReference Include="..\KEYCE_KODER.Runner\KEYCE_KODER.Runner.csproj" />
     <ProjectReference Include="..\KEYCE_KODER.Terminal\KEYCE_KODER.Terminal.csproj" />
+    <ProjectReference Include="..\KEYCE_KODER.AI\KEYCE_KODER.AI.csproj" />
   </ItemGroup>
 
   <ItemGroup>
