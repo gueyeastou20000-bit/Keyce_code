@@ -55,6 +55,11 @@ public static class LanguageProfiles
         [new ToolCandidate("g++", [])],
         ["--version"], @"g\+\+");
 
+    private static readonly ToolSpec DotnetTool = new(
+        "dotnet", ".NET SDK", "Installez le SDK .NET 10 depuis dotnet.microsoft.com (ou menu Outils → Langages et outils).",
+        [new ToolCandidate("dotnet", [])],
+        ["--version"], @"^\d+\.\d+\.\d+");
+
     public static IReadOnlyList<LanguageProfile> All { get; } =
     [
         new LanguageProfile("python", "Python", [".py"], PythonTool,
@@ -76,6 +81,9 @@ public static class LanguageProfiles
 
         new LanguageProfile("cpp", "C++", [".cpp", ".cc", ".cxx"], GppTool,
             (t, script, buildDir) => Compiled(t, script, buildDir, "g++")),
+
+        new LanguageProfile("csharp", "C#", [".cs", ".csproj"], DotnetTool,
+            (t, script, _) => CSharp(t, script)),
     ];
 
     public static IReadOnlyList<string> SupportedExtensions { get; } =
@@ -85,6 +93,55 @@ public static class LanguageProfiles
     {
         var ext = Path.GetExtension(path);
         return All.FirstOrDefault(p => p.Extensions.Contains(ext, StringComparer.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// C# : si le fichier fait partie d'un projet (.csproj dans son dossier ou un dossier parent),
+    /// on compile puis on lance ce projet. Sinon, fichier seul (.NET 10) : « dotnet run --file Programme.cs ».
+    /// </summary>
+    private static IReadOnlyList<RunStep> CSharp(ResolvedTool tool, string script)
+    {
+        var project = script.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)
+            ? script
+            : FindProject(Path.GetDirectoryName(script)!);
+
+        if (project is null)
+        {
+            var file = Path.GetFileName(script);
+            return
+            [
+                new RunStep(tool.FileName, ["build", script, "-nologo", "-v", "q"], $"dotnet build {file}", IsBuild: true),
+                new RunStep(tool.FileName, ["run", "--file", script, "-v", "q"], $"dotnet run {file}"),
+            ];
+        }
+
+        var name = Path.GetFileName(project);
+        return
+        [
+            new RunStep(tool.FileName, ["build", project, "-nologo", "-v", "q"], $"dotnet build {name}", IsBuild: true),
+            new RunStep(tool.FileName, ["run", "--project", project, "--no-build"], $"dotnet run --project {name}"),
+        ];
+    }
+
+    /// <summary>Cherche un .csproj dans le dossier du fichier, puis jusqu'à 3 dossiers parents.</summary>
+    private static string? FindProject(string folder)
+    {
+        var dir = new DirectoryInfo(folder);
+
+        for (var level = 0; dir is not null && level < 4; level++, dir = dir.Parent)
+        {
+            try
+            {
+                var projects = dir.GetFiles("*.csproj");
+                if (projects.Length > 0) return projects[0].FullName;
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+            {
+                return null; // dossier protégé : on considère le fichier comme seul
+            }
+        }
+
+        return null;
     }
 
     private static IReadOnlyList<RunStep> Compiled(ResolvedTool tool, string script, string buildDir, string compiler)

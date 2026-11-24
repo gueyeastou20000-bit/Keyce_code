@@ -2,7 +2,7 @@ namespace KEYCE_KODER.App.Tools;
 
 /// <summary>
 /// Comment installer un outil du Runner avec winget.
-/// ToolId    : identifiant de l'outil dans LanguageProfiles (Runner) : "python", "node", "java", "gcc", "g++".
+/// ToolId    : identifiant de l'outil dans LanguageProfiles (Runner) : "python", "node", "java", "gcc", "g++", "dotnet".
 /// WingetId  : identifiant du paquet winget.
 /// ExeName   : exécutable à chercher si l'installation ne l'ajoute pas au PATH.
 /// SearchRoots : dossiers où chercher cet exécutable (variables %...% autorisées).
@@ -34,6 +34,9 @@ public static class ToolInstallCatalog
 
         new("g++", "BrechtSanders.WinLibs.POSIX.UCRT", "g++.exe",
             [WingetPackages, @"C:\msys64\ucrt64\bin"]),
+
+        new("dotnet", "Microsoft.DotNet.SDK.10", "dotnet.exe",
+            [@"%ProgramFiles%\dotnet"]),
     ];
 
     /// <summary>Informations d'installation d'un outil, ou null s'il n'est pas dans le catalogue.</summary>
