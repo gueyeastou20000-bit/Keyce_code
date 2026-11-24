@@ -45,9 +45,7 @@ public sealed class BottomPanel : Grid
         """);
 
     private readonly IScriptRunner _runner;
-    private readonly TerminalSession _terminal;
     private readonly Func<Task<string?>> _prepareScript;
-    private readonly Func<string?> _getTerminalWorkingDirectory;
 
     // Onglet SORTIE
     private readonly Grid _outputHost = new();
@@ -56,9 +54,8 @@ public sealed class BottomPanel : Grid
     private readonly TextBox _programInput = new();
 
     // Onglet TERMINAL
-    private readonly Grid _terminalHost = new();
-    private readonly ConsoleView _termView = new();
-    private readonly TextBox _input = new();
+    private readonly TerminalView _terminalView;
+    private readonly ComboBox _shellChoice = new();
 
     private readonly TextBlock _status = new();
     private readonly Button _tabOutput = MakeButton("SORTIE");
@@ -69,6 +66,11 @@ public sealed class BottomPanel : Grid
     private readonly Border _debugHost = new();
 
     private enum PanelTab { Output, Terminal, Debug }
+
+    private bool _terminalHostReady; // évite un redémarrage pendant la construction
+
+    /// <summary>Clic sur la branche Git dans l'invite du terminal.</summary>
+    public event Action? GitViewRequested;
     private readonly Button _restart = MakeButton("↻ Redémarrer");
     private readonly Button _run = MakeButton("▶ Run", Green);
     private readonly Button _stop = MakeButton("■ Stop", Red);
@@ -81,9 +83,9 @@ public sealed class BottomPanel : Grid
         Func<string?> getTerminalWorkingDirectory)
     {
         _runner = runner;
-        _terminal = terminal;
         _prepareScript = prepareScript;
-        _getTerminalWorkingDirectory = getTerminalWorkingDirectory;
+        _terminalView = new TerminalView(terminal, getTerminalWorkingDirectory);
+        _terminalView.GitRequested += () => GitViewRequested?.Invoke();
 
         Background = PanelBg;
         RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -91,13 +93,13 @@ public sealed class BottomPanel : Grid
 
         BuildHeader();
         BuildOutputHost();
-        BuildTerminalHost();
+        BuildShellChoice();
 
         SetRow(_outputHost, 1);
-        SetRow(_terminalHost, 1);
+        SetRow(_terminalView, 1);
         SetRow(_debugHost, 1);
         Children.Add(_outputHost);
-        Children.Add(_terminalHost);
+        Children.Add(_terminalView);
         Children.Add(_debugHost);
 
         _tabOutput.Click += (_, _) => ShowTab(PanelTab.Output);
@@ -106,21 +108,13 @@ public sealed class BottomPanel : Grid
         _run.Click += (_, _) => RequestRun();
         _stop.Click += (_, _) => RequestStop();
 
-        _restart.Click += (_, _) =>
-        {
-            _termView.Clear();
-            UpdateTerminalWorkingDirectory();
-            _terminal.Restart();
-        };
+        _restart.Click += (_, _) => _terminalView.Restart();
         
-        _input.PreviewKeyDown += OnInputKeyDown;
         _programInput.PreviewKeyDown += OnProgramInputKeyDown;
 
         _runner.OutputReceived += (_, lines) => _output.Append(lines);
         _runner.StateChanged += (_, _) => UpdateState();
         _runner.Completed += OnCompleted;
-        _terminal.OutputReceived += (_, lines) => _termView.Append(lines);
-        _terminal.Exited += OnTerminalExited;
 
         ShowTab(PanelTab.Output);
         UpdateState();
@@ -202,91 +196,6 @@ public sealed class BottomPanel : Grid
 
     // ───── Terminal ─────
 
-    private void EnsureTerminalStarted()
-    {
-        if (_terminal.IsRunning) return;
-        try
-        {
-            UpdateTerminalWorkingDirectory();
-            _terminal.Start();
-        }
-        catch (Exception ex)
-        {
-            _termView.Append(new[] { new OutputLine(OutputKind.StdErr, $"Impossible de démarrer le terminal : {ex.Message}\n") });
-        }
-    }
-
-    private void UpdateTerminalWorkingDirectory()
-    {
-        string? projectFolder = _getTerminalWorkingDirectory();
-
-        string userFolder = Environment.GetFolderPath(
-            Environment.SpecialFolder.UserProfile);
-
-        _terminal.WorkingDirectory =
-            !string.IsNullOrWhiteSpace(projectFolder) &&
-            Directory.Exists(projectFolder)
-                ? Path.GetFullPath(projectFolder)
-                : userFolder;
-    }
-
-    private void OnTerminalExited(object? sender, int exitCode)
-    {
-        if (_terminal.IsRunning) return; // le terminal vient d'être redémarré
-        _termView.Append(new[]
-        {
-            new OutputLine(OutputKind.Info, $"\n[Terminal terminé, code {exitCode}. Tapez une commande pour le relancer.]\n"),
-        });
-    }
-
-    private async void OnInputKeyDown(object sender, KeyEventArgs e)
-    {
-        switch (e.Key)
-        {
-            case Key.Enter:
-                e.Handled = true;
-                var command = _input.Text;
-                _input.Clear();
-                if (!string.IsNullOrWhiteSpace(command)) await SendAsync(command);
-                break;
-
-            case Key.Up:
-                e.Handled = true;
-                var previous = _terminal.History.Previous();
-                if (previous is not null) SetInput(previous);
-                break;
-
-            case Key.Down:
-                e.Handled = true;
-                SetInput(_terminal.History.Next());
-                break;
-        }
-    }
-
-    private async Task SendAsync(string command)
-    {
-        try
-        {
-            if (!_terminal.IsRunning)
-            {
-                UpdateTerminalWorkingDirectory();
-                _terminal.Start();
-            }
-
-            await _terminal.SendCommandAsync(command);
-        }
-        catch (Exception ex)
-        {
-            _termView.Append(new[] { new OutputLine(OutputKind.StdErr, $"Erreur : {ex.Message}\n") });
-        }
-    }
-
-    private void SetInput(string text)
-    {
-        _input.Text = text;
-        _input.CaretIndex = text.Length;
-    }
-
     // ───── Construction de l'interface ─────
 
     private void ShowTab(PanelTab tab)
@@ -294,9 +203,10 @@ public sealed class BottomPanel : Grid
         bool terminal = tab == PanelTab.Terminal;
 
         _outputHost.Visibility = tab == PanelTab.Output ? Visibility.Visible : Visibility.Collapsed;
-        _terminalHost.Visibility = terminal ? Visibility.Visible : Visibility.Collapsed;
+        _terminalView.Visibility = terminal ? Visibility.Visible : Visibility.Collapsed;
         _debugHost.Visibility = tab == PanelTab.Debug ? Visibility.Visible : Visibility.Collapsed;
         _restart.Visibility = terminal ? Visibility.Visible : Visibility.Collapsed;
+        _shellChoice.Visibility = terminal ? Visibility.Visible : Visibility.Collapsed;
 
         Select(_tabOutput, tab == PanelTab.Output);
         Select(_tabTerminal, terminal);
@@ -304,8 +214,8 @@ public sealed class BottomPanel : Grid
 
         if (terminal)
         {
-            EnsureTerminalStarted();
-            Dispatcher.InvokeAsync(() => { _input.Focus(); }, DispatcherPriority.Input);
+            _terminalView.EnsureStarted();
+            _terminalView.FocusInput();
         }
     }
 
@@ -323,7 +233,7 @@ public sealed class BottomPanel : Grid
         };
         header.MinHeight = 38;
 
-        for (var i = 0; i < 8; i++)
+        for (var i = 0; i < 9; i++)
         {
             header.ColumnDefinitions.Add(new ColumnDefinition
             {
@@ -340,9 +250,10 @@ public sealed class BottomPanel : Grid
         Place(header, _tabTerminal, 1);
         Place(header, _tabDebug, 2);
         Place(header, _status, 4);
-        Place(header, _restart, 5);
-        Place(header, _run, 6);
-        Place(header, _stop, 7);
+        Place(header, _shellChoice, 5);
+        Place(header, _restart, 6);
+        Place(header, _run, 7);
+        Place(header, _stop, 8);
 
         SetRow(header, 0);
         Children.Add(header);
@@ -379,33 +290,30 @@ public sealed class BottomPanel : Grid
         _outputHost.Children.Add(_programInputRow);
     }
 
-    private void BuildTerminalHost()
+    /// <summary>Liste « PowerShell / Invite de commandes / Git Bash » (onglet TERMINAL).</summary>
+    private void BuildShellChoice()
     {
-        _terminalHost.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        _terminalHost.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        _shellChoice.Items.Add(new ComboBoxItem { Content = "PowerShell", Tag = TerminalShell.PowerShell });
+        _shellChoice.Items.Add(new ComboBoxItem { Content = "Invite de commandes", Tag = TerminalShell.Cmd });
 
-        StyleInput(_input);
+        if (TerminalSession.FindGitBash() is not null)
+            _shellChoice.Items.Add(new ComboBoxItem { Content = "Git Bash", Tag = TerminalShell.GitBash });
 
-        var prompt = new TextBlock
+        _shellChoice.SelectedIndex = 0;
+        _shellChoice.MinWidth = 140;
+        _shellChoice.Margin = new Thickness(0, 0, 8, 0);
+        _shellChoice.VerticalAlignment = VerticalAlignment.Center;
+        _shellChoice.Focusable = false;
+        _shellChoice.ToolTip = "Shell du terminal";
+        _shellChoice.SelectionChanged += (_, _) =>
         {
-            Text = "›",
-            Foreground = Accent,
-            FontSize = 16,
-            Margin = new Thickness(10, 0, 4, 0),
-            VerticalAlignment = VerticalAlignment.Center,
+            if (_shellChoice.SelectedItem is ComboBoxItem { Tag: TerminalShell shell } && _terminalHostReady)
+            {
+                _terminalView.SwitchShell(shell);
+                _terminalView.FocusInput();
+            }
         };
-
-        var inputRow = new Grid { Background = HeaderBg };
-        inputRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        inputRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        SetColumn(_input, 1);
-        inputRow.Children.Add(prompt);
-        inputRow.Children.Add(_input);
-
-        SetRow(_termView, 0);
-        SetRow(inputRow, 1);
-        _terminalHost.Children.Add(_termView);
-        _terminalHost.Children.Add(inputRow);
+        _terminalHostReady = true;
     }
 
     private static void StyleInput(TextBox box)

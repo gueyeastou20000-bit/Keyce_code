@@ -164,6 +164,9 @@ public class MainWindow : Window
         // Navigation entre les vues
         activityBar.ViewSelected += sidebar.ShowView;
 
+        // Terminal : clic sur la branche Git de l'invite → vue Contrôle de source
+        _bottomPanel.GitViewRequested += () => activityBar.SelectView("git");
+
         // Débogueur : vue « Exécuter et déboguer » + onglet « CONSOLE DE DÉBOGAGE »
         var debugView = new DebugView();
         var debugConsole = new DebugConsole();
