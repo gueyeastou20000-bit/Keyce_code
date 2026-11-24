@@ -36,6 +36,9 @@ public sealed class EditorTab
         Document = document;
 
         Editor = new CodeEditor();
+        Editor = new CodeEditor();
+Editor.FontFamily = new FontFamily("Agency FB, Consolas");
+Editor.FontSize = 17;
         EditorService = new EditorService(Editor);
         EditorService.SetDocument(document);
         Actions = new EditorActions(Editor);
