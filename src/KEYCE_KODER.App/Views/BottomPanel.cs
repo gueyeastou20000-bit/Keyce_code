@@ -1,17 +1,18 @@
-﻿using System.Windows;
+﻿using System;
+using System.IO;
+using System.Threading.Tasks;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Markup;
 using System.Windows.Media;
 using System.Windows.Threading;
-using System.IO;
 using KEYCE_KODER.Core.Execution;
 using KEYCE_KODER.Terminal;
 
-
 namespace KEYCE_KODER.App.Views;
 
-/// <summary>Panneau inférieur : sortie d'exécution, terminal intégré et console de débogage.</summary>
+/// <summary>Panneau inférieur : sortie, terminal, problèmes et console de débogage.</summary>
 public sealed class BottomPanel : Grid
 {
     private static readonly Brush PanelBg = Theme.Panel;
@@ -35,7 +36,7 @@ public sealed class BottomPanel : Grid
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
-              <Setter TargetName="bd" Property="Background" Value="#242A34"/>
+              <Setter TargetName="bd" Property="Background" Value="#22242B"/>
             </Trigger>
             <Trigger Property="IsEnabled" Value="False">
               <Setter Property="Opacity" Value="0.4"/>
@@ -46,6 +47,7 @@ public sealed class BottomPanel : Grid
 
     private readonly IScriptRunner _runner;
     private readonly Func<Task<string?>> _prepareScript;
+    private readonly Func<string?> _getTerminalWorkingDirectory;
 
     // Onglet SORTIE
     private readonly Grid _outputHost = new();
@@ -57,23 +59,43 @@ public sealed class BottomPanel : Grid
     private readonly TerminalView _terminalView;
     private readonly ComboBox _shellChoice = new();
 
-    private readonly TextBlock _status = new();
-    private readonly Button _tabOutput = MakeButton("SORTIE");
-    private readonly Button _tabTerminal = MakeButton("TERMINAL");
-    private readonly Button _tabDebug = MakeButton("CONSOLE DE DÉBOGAGE");
+    // Onglet PROBLÈMES
+    private readonly Grid _problemsHost = new();
+    private readonly TextBlock _problemsMessage = new();
+    private readonly Border _problemsBadge = new();
+    private readonly TextBlock _problemsBadgeText = new();
 
-    // Onglet CONSOLE DE DÉBOGAGE (contenu fourni par le débogueur)
+    // Onglet CONSOLE DE DÉBOGAGE
     private readonly Border _debugHost = new();
 
-    private enum PanelTab { Output, Terminal, Debug }
+    public enum PanelTab { Output, Terminal, Problems, Debug }
+    private PanelTab _currentTab = PanelTab.Output;
 
-    private bool _terminalHostReady; // évite un redémarrage pendant la construction
+    private bool _terminalHostReady;
 
     /// <summary>Clic sur la branche Git dans l'invite du terminal.</summary>
     public event Action? GitViewRequested;
-    private readonly Button _restart = MakeButton("↻ Redémarrer");
-    private readonly Button _run = MakeButton("▶ Run", Green);
-    private readonly Button _stop = MakeButton("■ Stop", Red);
+    public event Action? CloseRequested;
+    public event Action? MaximizeRequested;
+    public event Action? NewTerminalRequested;
+
+    private readonly TextBlock _status = new();
+    private readonly Button _tabOutput = MakeButton("SORTIE");
+    private readonly Button _tabTerminal = MakeButton("TERMINAL");
+    private readonly Button _tabProblems = MakeButton("");
+    private readonly Button _tabDebug = MakeButton("CONSOLE DE DÉBOGAGE");
+
+    private readonly Button _restart;
+    private readonly Button _run;
+    private readonly Button _stop;
+
+    // Boutons d'action modernes à droite
+    private readonly Button _btnNewTerminal;
+    private readonly Button _btnClear;
+    private readonly Button _btnMaximize;
+    private readonly Button _btnClose;
+
+    private bool _isMaximized;
 
     /// <param name="prepareScript">Sauvegarde le fichier actif et renvoie son chemin (null = annuler).</param>
     public BottomPanel(
@@ -84,8 +106,20 @@ public sealed class BottomPanel : Grid
     {
         _runner = runner;
         _prepareScript = prepareScript;
+        _getTerminalWorkingDirectory = getTerminalWorkingDirectory;
+
         _terminalView = new TerminalView(terminal, getTerminalWorkingDirectory);
         _terminalView.GitRequested += () => GitViewRequested?.Invoke();
+
+        // Boutons avec icônes SVG
+        _restart = MakeIconButton("restart", "Redémarrer", "Redémarrer le terminal");
+        _run = MakeIconButton("play", "Run", "Exécuter le fichier actif (F5)", Green);
+        _stop = MakeIconButton("stop", "Stop", "Arrêter l'exécution (Maj+F5)", Red);
+
+        _btnNewTerminal = MakeIconButtonOnly("plus", "Nouveau terminal");
+        _btnClear = MakeIconButtonOnly("trash", "Effacer le contenu");
+        _btnMaximize = MakeIconButtonOnly("maximize", "Agrandir / Restaurer le panneau");
+        _btnClose = MakeIconButtonOnly("close", "Fermer le panneau");
 
         Background = PanelBg;
         RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -93,23 +127,33 @@ public sealed class BottomPanel : Grid
 
         BuildHeader();
         BuildOutputHost();
+        BuildProblemsHost();
         BuildShellChoice();
 
         SetRow(_outputHost, 1);
         SetRow(_terminalView, 1);
+        SetRow(_problemsHost, 1);
         SetRow(_debugHost, 1);
+
         Children.Add(_outputHost);
         Children.Add(_terminalView);
+        Children.Add(_problemsHost);
         Children.Add(_debugHost);
 
         _tabOutput.Click += (_, _) => ShowTab(PanelTab.Output);
         _tabTerminal.Click += (_, _) => ShowTab(PanelTab.Terminal);
+        _tabProblems.Click += (_, _) => ShowTab(PanelTab.Problems);
         _tabDebug.Click += (_, _) => ShowTab(PanelTab.Debug);
+
         _run.Click += (_, _) => RequestRun();
         _stop.Click += (_, _) => RequestStop();
-
         _restart.Click += (_, _) => _terminalView.Restart();
-        
+
+        _btnNewTerminal.Click += (_, _) => NewTerminal();
+        _btnClear.Click += (_, _) => ClearActiveTab();
+        _btnMaximize.Click += (_, _) => ToggleMaximize();
+        _btnClose.Click += (_, _) => ClosePanel();
+
         _programInput.PreviewKeyDown += OnProgramInputKeyDown;
 
         _runner.OutputReceived += (_, lines) => _output.Append(lines);
@@ -120,19 +164,64 @@ public sealed class BottomPanel : Grid
         UpdateState();
     }
 
-    // ───── API publique (raccourcis clavier F5 / Maj+F5) ─────
+    // ───── API publique (raccourcis clavier F5 / Maj+F5 / Affichage) ─────
 
     public void RequestRun() => _ = RunAsync();
 
     public void RequestStop() => _runner.Stop();
 
+    public void NewTerminal()
+    {
+        _terminalView.Restart();
+        ShowTab(PanelTab.Terminal);
+        NewTerminalRequested?.Invoke();
+    }
+
+    public void ClearActiveTab()
+    {
+        if (_currentTab == PanelTab.Output)
+        {
+            _output.Clear();
+        }
+        else if (_currentTab == PanelTab.Terminal)
+        {
+            _terminalView.Restart();
+        }
+    }
+
+    public void TogglePanel()
+    {
+        Visibility = Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    public void ClosePanel()
+    {
+        Visibility = Visibility.Collapsed;
+        CloseRequested?.Invoke();
+    }
+
+    public void ToggleMaximize()
+    {
+        _isMaximized = !_isMaximized;
+        _btnMaximize.Content = SvgIconFactory.Create(_isMaximized ? "restore" : "maximize", 12);
+        _btnMaximize.ToolTip = _isMaximized ? "Restaurer le panneau" : "Agrandir le panneau";
+        MaximizeRequested?.Invoke();
+    }
+
     // ───── Console de débogage ─────
 
-    /// <summary>Place la console de débogage dans l'onglet « CONSOLE DE DÉBOGAGE ».</summary>
     public void SetDebugConsole(UIElement content) => _debugHost.Child = content;
 
-    /// <summary>Affiche l'onglet « CONSOLE DE DÉBOGAGE ».</summary>
     public void ShowDebugConsole() => ShowTab(PanelTab.Debug);
+
+    public void SetProblemsCount(int count)
+    {
+        _problemsBadgeText.Text = count.ToString();
+        _problemsBadge.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        _problemsMessage.Text = count == 0
+            ? "Aucun problème détecté dans l'espace de travail."
+            : $"{count} problème(s) identifié(s).";
+    }
 
     // ───── Exécution du programme ─────
 
@@ -140,7 +229,7 @@ public sealed class BottomPanel : Grid
     {
         if (_runner.State == RunState.Running || !_run.IsEnabled) return;
 
-        _run.IsEnabled = false; // évite le double clic pendant la sauvegarde
+        _run.IsEnabled = false;
         try
         {
             ShowTab(PanelTab.Output);
@@ -181,7 +270,6 @@ public sealed class BottomPanel : Grid
         };
     }
 
-    /// <summary>Entrée pour le programme en cours (input(), scanf, Scanner…).</summary>
     private void OnProgramInputKeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key != Key.Enter) return;
@@ -190,29 +278,31 @@ public sealed class BottomPanel : Grid
         var text = _programInput.Text;
         _programInput.Clear();
 
-        _output.Append(new[] { new OutputLine(OutputKind.Info, text + "\n") }); // écho de ce qui est envoyé
+        _output.Append(new[] { new OutputLine(OutputKind.Info, text + "\n") });
         _runner.SendInput(text);
     }
 
-    // ───── Terminal ─────
+    // ───── Affichage des onglets ─────
 
-    // ───── Construction de l'interface ─────
-
-    private void ShowTab(PanelTab tab)
+    public void ShowTab(PanelTab tab)
     {
-        bool terminal = tab == PanelTab.Terminal;
+        _currentTab = tab;
+        bool isTerminal = tab == PanelTab.Terminal;
 
         _outputHost.Visibility = tab == PanelTab.Output ? Visibility.Visible : Visibility.Collapsed;
-        _terminalView.Visibility = terminal ? Visibility.Visible : Visibility.Collapsed;
+        _terminalView.Visibility = isTerminal ? Visibility.Visible : Visibility.Collapsed;
+        _problemsHost.Visibility = tab == PanelTab.Problems ? Visibility.Visible : Visibility.Collapsed;
         _debugHost.Visibility = tab == PanelTab.Debug ? Visibility.Visible : Visibility.Collapsed;
-        _restart.Visibility = terminal ? Visibility.Visible : Visibility.Collapsed;
-        _shellChoice.Visibility = terminal ? Visibility.Visible : Visibility.Collapsed;
+
+        _restart.Visibility = isTerminal ? Visibility.Visible : Visibility.Collapsed;
+        _shellChoice.Visibility = isTerminal ? Visibility.Visible : Visibility.Collapsed;
 
         Select(_tabOutput, tab == PanelTab.Output);
-        Select(_tabTerminal, terminal);
+        Select(_tabTerminal, isTerminal);
+        Select(_tabProblems, tab == PanelTab.Problems);
         Select(_tabDebug, tab == PanelTab.Debug);
 
-        if (terminal)
+        if (isTerminal)
         {
             _terminalView.EnsureStarted();
             _terminalView.FocusInput();
@@ -227,33 +317,65 @@ public sealed class BottomPanel : Grid
 
     private void BuildHeader()
     {
-        var header = new Grid
-        {
-            Background = HeaderBg
-        };
-        header.MinHeight = 38;
+        var header = new Grid { Background = HeaderBg, MinHeight = 36 };
 
-        for (var i = 0; i < 9; i++)
-        {
-            header.ColumnDefinitions.Add(new ColumnDefinition
-            {
-                Width = i == 3 ? new GridLength(1, GridUnitType.Star) : GridLength.Auto,
-            });
-        }
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // 0: Onglets
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // 1: Espace
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // 2: Status
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // 3: ShellChoice
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // 4: Restart
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // 5: Run
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // 6: Stop
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // 7: Window controls (icons)
+
+        // Onglet Problèmes avec badge
+        var probSp = new StackPanel { Orientation = Orientation.Horizontal };
+        probSp.Children.Add(new TextBlock { Text = "PROBLÈMES", VerticalAlignment = VerticalAlignment.Center });
+
+        _problemsBadge.Background = Theme.Surface;
+        _problemsBadge.CornerRadius = new CornerRadius(7);
+        _problemsBadge.Padding = new Thickness(5, 1, 5, 1);
+        _problemsBadge.Margin = new Thickness(6, 0, 0, 0);
+        _problemsBadge.VerticalAlignment = VerticalAlignment.Center;
+        _problemsBadge.Visibility = Visibility.Collapsed;
+
+        _problemsBadgeText.Text = "0";
+        _problemsBadgeText.FontSize = 10;
+        _problemsBadgeText.FontWeight = FontWeights.Bold;
+        _problemsBadgeText.Foreground = Theme.Accent;
+        _problemsBadge.Child = _problemsBadgeText;
+        probSp.Children.Add(_problemsBadge);
+        _tabProblems.Content = probSp;
+
+        var tabs = new StackPanel { Orientation = Orientation.Horizontal };
+        tabs.Children.Add(_tabOutput);
+        tabs.Children.Add(_tabTerminal);
+        tabs.Children.Add(_tabProblems);
+        tabs.Children.Add(_tabDebug);
 
         _status.Foreground = Gray;
         _status.FontSize = 12;
         _status.VerticalAlignment = VerticalAlignment.Center;
-        _status.Margin = new Thickness(0, 0, 12, 0);
+        _status.Margin = new Thickness(0, 0, 10, 0);
 
-        Place(header, _tabOutput, 0);
-        Place(header, _tabTerminal, 1);
-        Place(header, _tabDebug, 2);
-        Place(header, _status, 4);
-        Place(header, _shellChoice, 5);
-        Place(header, _restart, 6);
-        Place(header, _run, 7);
-        Place(header, _stop, 8);
+        var rightIcons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(8, 0, 8, 0),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        rightIcons.Children.Add(_btnNewTerminal);
+        rightIcons.Children.Add(_btnClear);
+        rightIcons.Children.Add(_btnMaximize);
+        rightIcons.Children.Add(_btnClose);
+
+        Place(header, tabs, 0);
+        Place(header, _status, 2);
+        Place(header, _shellChoice, 3);
+        Place(header, _restart, 4);
+        Place(header, _run, 5);
+        Place(header, _stop, 6);
+        Place(header, rightIcons, 7);
 
         SetRow(header, 0);
         Children.Add(header);
@@ -265,7 +387,7 @@ public sealed class BottomPanel : Grid
         _outputHost.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         StyleInput(_programInput);
-        _programInput.ToolTip = "Texte envoyé au programme (input(), scanf, Scanner…). Entrée pour envoyer.";
+        _programInput.ToolTip = "Texte envoyé au programme. Entrée pour envoyer.";
 
         var prompt = new TextBlock
         {
@@ -277,7 +399,7 @@ public sealed class BottomPanel : Grid
         };
 
         _programInputRow.Background = HeaderBg;
-        _programInputRow.Visibility = Visibility.Collapsed; // visible seulement pendant une exécution
+        _programInputRow.Visibility = Visibility.Collapsed;
         _programInputRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         _programInputRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         SetColumn(_programInput, 1);
@@ -290,7 +412,16 @@ public sealed class BottomPanel : Grid
         _outputHost.Children.Add(_programInputRow);
     }
 
-    /// <summary>Liste « PowerShell / Invite de commandes / Git Bash » (onglet TERMINAL).</summary>
+    private void BuildProblemsHost()
+    {
+        _problemsMessage.Text = "Aucun problème détecté dans l'espace de travail.";
+        _problemsMessage.Foreground = Gray;
+        _problemsMessage.FontSize = 12;
+        _problemsMessage.Margin = new Thickness(16, 14, 16, 0);
+        _problemsHost.Children.Add(_problemsMessage);
+        _problemsHost.Visibility = Visibility.Collapsed;
+    }
+
     private void BuildShellChoice()
     {
         _shellChoice.Items.Add(new ComboBoxItem { Content = "PowerShell", Tag = TerminalShell.PowerShell });
@@ -300,7 +431,7 @@ public sealed class BottomPanel : Grid
             _shellChoice.Items.Add(new ComboBoxItem { Content = "Git Bash", Tag = TerminalShell.GitBash });
 
         _shellChoice.SelectedIndex = 0;
-        _shellChoice.MinWidth = 140;
+        _shellChoice.MinWidth = 130;
         _shellChoice.Margin = new Thickness(0, 0, 8, 0);
         _shellChoice.VerticalAlignment = VerticalAlignment.Center;
         _shellChoice.Focusable = false;
@@ -345,13 +476,55 @@ public sealed class BottomPanel : Grid
         Padding = new Thickness(12, 6, 12, 6),
         FontSize = 12,
         Cursor = Cursors.Hand,
-        Focusable = false, // ne vole pas le focus à l'éditeur
+        Focusable = false,
     };
 
-    private static SolidColorBrush Frozen(byte r, byte g, byte b)
+    private static Button MakeIconButton(string iconName, string text, string tooltip, Brush? textBrush = null)
     {
-        var brush = new SolidColorBrush(Color.FromRgb(r, g, b));
-        brush.Freeze();
-        return brush;
+        var sp = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        var icon = SvgIconFactory.Create(iconName, 13);
+        icon.Margin = new Thickness(0, 0, 6, 0);
+        sp.Children.Add(icon);
+        sp.Children.Add(new TextBlock
+        {
+            Text = text,
+            Foreground = textBrush ?? White,
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center
+        });
+
+        var btn = new Button
+        {
+            Content = sp,
+            Template = FlatTemplate,
+            Background = Brushes.Transparent,
+            BorderBrush = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(8, 4, 8, 4),
+            ToolTip = tooltip,
+            Cursor = Cursors.Hand,
+            Focusable = false,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        return btn;
+    }
+
+    private static Button MakeIconButtonOnly(string iconName, string tooltip)
+    {
+        var icon = SvgIconFactory.Create(iconName, 13);
+        var btn = new Button
+        {
+            Content = icon,
+            Template = FlatTemplate,
+            Background = Brushes.Transparent,
+            BorderBrush = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(6, 4, 6, 4),
+            ToolTip = tooltip,
+            Cursor = Cursors.Hand,
+            Focusable = false,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        return btn;
     }
 }
