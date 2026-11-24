@@ -36,6 +36,7 @@ public sealed class EditorTab
         Editor.InnerEditor.FontSize = AppSettings.Current.EditorFontSize;
         Editor.InnerEditor.ShowLineNumbers = AppSettings.Current.ShowLineNumbers;
         Editor.InnerEditor.WordWrap = AppSettings.Current.WordWrap;
+        ApplyThemeColors();
 
         EditorService = new EditorService(Editor);
         EditorService.SetDocument(document);
@@ -90,7 +91,22 @@ public sealed class EditorTab
 
         Editor.TextChanged += (_, _) => RefreshHeader();
 
+        // Réaction dynamique et immédiate au changement de thème
+        Theme.ThemeChanged += _ =>
+        {
+            _tabStyle = null;
+            TabItem.Style = GetTabStyle();
+            ApplyThemeColors();
+        };
+
         RefreshHeader();
+    }
+
+    private void ApplyThemeColors()
+    {
+        Editor.InnerEditor.Background = Theme.Editor;
+        Editor.InnerEditor.Foreground = Theme.Text;
+        Editor.InnerEditor.LineNumbersForeground = Theme.Muted;
     }
 
     public void RefreshHeader()
@@ -109,6 +125,7 @@ public sealed class EditorTab
         Editor.InnerEditor.FontSize = settings.EditorFontSize;
         Editor.InnerEditor.ShowLineNumbers = settings.ShowLineNumbers;
         Editor.InnerEditor.WordWrap = settings.WordWrap;
+        ApplyThemeColors();
     }
 
     /// <summary>Style partagé par tous les onglets (design bleu nuit / orange d'Astou).</summary>

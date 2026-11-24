@@ -26,8 +26,6 @@ public class Sidebar : Border
         ["search"] = "RECHERCHE",
         ["git"] = "CONTRÔLE DE SOURCE",
         ["debug"] = "EXÉCUTER ET DÉBOGUER",
-        ["ai"] = "ASSISTANT IA",
-        ["home"] = "ACCUEIL",
         ["settings"] = "PARAMÈTRES",
         ["tools"] = "LANGAGES ET OUTILS",
         ["account"] = "COMPTE",
@@ -39,8 +37,6 @@ public class Sidebar : Border
     public ExplorerView Explorer { get; } = new();
     public SearchPanel Search { get; }
     public GitPanel SourceControl { get; }
-    public AiPanel Ai { get; } = new();
-    public WelcomeView Welcome { get; } = new();
     public SettingsView Settings { get; } = new();
 
     public event Action? OpenToolsRequested;
@@ -65,8 +61,6 @@ public class Sidebar : Border
         SourceControl.ChooseFolderRequested += Explorer.ChooseFolder;
         SourceControl.FolderOpenRequested += Explorer.OpenFolder;
 
-        _views["ai"] = Ai;
-        _views["home"] = Welcome;
         _views["settings"] = Settings;
 
         // Vues complémentaires

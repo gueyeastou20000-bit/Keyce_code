@@ -31,13 +31,11 @@ public class ActivityBar : Border
 
         AddLogo();
 
-        // Icônes vectorielles SVG (taille 18px au lieu de 21px, zéro emoji)
+        // Icônes vectorielles SVG (taille 18px, zéro emoji)
         Button explorer = AddSvgButton(_top, "explorer", "explorer", "Explorateur");
         AddSvgButton(_top, "search", "search", "Recherche");
         AddSvgButton(_top, "git", "git", "Contrôle de source (Git)");
         AddSvgButton(_top, "debug", "debug", "Exécuter et déboguer (Ctrl+Maj+D)");
-        AddSvgButton(_top, "ai", "ai", "Assistant IA KEYCE");
-        AddSvgButton(_top, "home", "home", "Accueil");
 
         AddSvgButton(_bottom, "tools", "tools", "Langages et outils");
         AddSvgButton(_bottom, "account", "account", "Compte");
@@ -53,7 +51,6 @@ public class ActivityBar : Border
             string path = Path.Combine(AppContext.BaseDirectory, "Assets", "logo.png");
             if (!File.Exists(path))
             {
-                // Fallback dossier Assets du projet
                 path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "Assets", "logo.png");
             }
 
@@ -80,7 +77,7 @@ public class ActivityBar : Border
         }
         catch
         {
-            // Logo introuvable : la barre continue sans le logo
+            // Logo introuvable
         }
     }
 
@@ -115,7 +112,7 @@ public class ActivityBar : Border
         return button;
     }
 
-    /// <summary>Sélectionne une vue par son identifiant (ex: git, debug, ai, settings).</summary>
+    /// <summary>Sélectionne une vue par son identifiant (ex: git, debug, settings).</summary>
     public void SelectView(string id)
     {
         foreach (UIElement child in _top.Children)

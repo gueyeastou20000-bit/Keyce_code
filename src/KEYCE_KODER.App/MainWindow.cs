@@ -38,6 +38,7 @@ public class MainWindow : Window
     // Onglets d'édition : un onglet par fichier ouvert
     private readonly TabControl _tabControl;
     private readonly TabManager _tabManager;
+    private readonly WelcomeView _welcomeView;
     private readonly FileActions _fileActions;
     private readonly EditActions _editActions;
     private readonly MainMenu _mainMenu;
@@ -60,6 +61,13 @@ public class MainWindow : Window
     private readonly ScriptRunner _runner;
     private readonly TerminalSession _terminal;
     private readonly BottomPanel _bottomPanel;
+
+    // Panneau IA latéral droit rétractable
+    private readonly AiPanel _aiPanel;
+    private readonly Border _aiHost;
+    private readonly GridSplitter _aiSplitter;
+    private readonly ColumnDefinition _aiCol = new() { Width = GridLength.Auto };
+    private GridLength _savedAiWidth = new(320);
 
     // Gestion du dimensionnement du panneau inférieur
     private readonly Grid _editorArea = new();
@@ -87,6 +95,18 @@ public class MainWindow : Window
         Background = Theme.Window;
         Foreground = Theme.Text;
 
+        // Configuration WindowChrome pour barre de titre personnalisée et redimensionnement natif
+        WindowStyle = WindowStyle.None;
+        var chrome = new System.Windows.Shell.WindowChrome
+        {
+            CaptionHeight = 0,
+            ResizeBorderThickness = new Thickness(6),
+            GlassFrameThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(0),
+            UseAeroCaptionButtons = false
+        };
+        System.Windows.Shell.WindowChrome.SetWindowChrome(this, chrome);
+
         // Initialisation des services Core
         _documentManager = new DocumentManager();
         _fileService = new FileService();
@@ -98,9 +118,13 @@ public class MainWindow : Window
         {
             Background = Theme.Editor,
             BorderThickness = new Thickness(0),
-            Padding = new Thickness(0)
+            Padding = new Thickness(0),
+            Visibility = Visibility.Collapsed
         };
         _tabManager = new TabManager(_tabControl);
+
+        // Page d'accueil Welcome
+        _welcomeView = new WelcomeView();
 
         // Actions du menu Fichier (nouveau, ouvrir, enregistrer, fermer...)
         _fileActions = new FileActions(
@@ -138,16 +162,16 @@ public class MainWindow : Window
         _tabManager.ActiveTabChanged += (_, _) => UpdateWindowState();
         _tabManager.ActiveEditorStateChanged += (_, _) => UpdateWindowState();
 
-        // Document Python de démonstration, ouvert dans le premier onglet
-        var demo = _documentService.CreateDocument();
-        demo.Content =
-            "def saluer(nom):\n" +
-            "    print(f\"Bonjour {nom} !\")\n\n" +
-            "saluer(\"KEYCE KODER\")";
-        demo.MarkSaved();
-
-        var demoTab = _tabManager.Open(demo);
-        demoTab.EditorService.SetLanguage("main.py");
+        // Synchronisation de l'affichage entre Welcome et TabControl
+        _tabManager.ActiveTabChanged += (_, _) => UpdateWelcomeVisibility();
+        _tabControl.SelectionChanged += (_, _) =>
+        {
+            if (_tabControl.SelectedItem != null && (_tabManager.Tabs.Count > 0 || _pdfViewers.Count > 0))
+            {
+                _welcomeView.Visibility = Visibility.Collapsed;
+                _tabControl.Visibility = Visibility.Visible;
+            }
+        };
 
         // Exécution sur le thread UI
         var uiContext = new DispatcherSynchronizationContext(Dispatcher);
@@ -225,6 +249,16 @@ public class MainWindow : Window
         // Ouverture des fichiers depuis l'Explorateur
         sidebar.Explorer.FileOpenRequested += path => _ = _fileActions.OpenPathAsync(path);
 
+        // Enregistrement des dossiers ouverts dans la liste des projets récents
+        sidebar.Explorer.CurrentPathChanged += folder =>
+        {
+            if (!string.IsNullOrEmpty(folder))
+            {
+                AppSettings.Current.AddRecentProject(folder);
+                _welcomeView.RefreshRecentProjects();
+            }
+        };
+
         // Contrôle de source (Git)
         sidebar.SourceControl.FileOpenRequested += path => _ = _fileActions.OpenPathAsync(path);
         sidebar.SourceControl.WorkingTreeChanged += ReloadTabsFromDisk;
@@ -242,7 +276,45 @@ public class MainWindow : Window
                 new Action(() => tab.Actions.Select(index, length)));
         };
 
-        // Zone centrale : éditeur en haut, séparateur, panneau inférieur en bas
+        // Actions de la page Welcome connectées aux services réels
+        _welcomeView.NewFileRequested += () =>
+        {
+            _fileActions.NewFile();
+            UpdateWelcomeVisibility();
+        };
+        _welcomeView.OpenFileRequested += async () =>
+        {
+            await _fileActions.OpenAsync();
+            UpdateWelcomeVisibility();
+        };
+        _welcomeView.OpenFolderRequested += () =>
+        {
+            sidebar.Explorer.ChooseFolder();
+            activityBar.SelectView("explorer");
+        };
+        _welcomeView.NewFolderRequested += () =>
+        {
+            var dlg = new Microsoft.Win32.OpenFolderDialog
+            {
+                Title = "Sélectionner ou créer un dossier de projet"
+            };
+            if (dlg.ShowDialog() == true)
+            {
+                sidebar.Explorer.OpenFolder(dlg.FolderName);
+                activityBar.SelectView("explorer");
+            }
+        };
+        _welcomeView.OpenRecentFolderRequested += path =>
+        {
+            sidebar.Explorer.OpenFolder(path);
+            activityBar.SelectView("explorer");
+        };
+
+        // Zone centrale : éditeur / welcome en haut, séparateur, panneau inférieur en bas
+        var editorContainer = new Grid();
+        editorContainer.Children.Add(_welcomeView);
+        editorContainer.Children.Add(_tabControl);
+
         _editorArea.RowDefinitions.Add(_editorRow);
         _editorArea.RowDefinitions.Add(_splitterRow);
         _editorArea.RowDefinitions.Add(_bottomRow);
@@ -256,13 +328,59 @@ public class MainWindow : Window
             Background = Theme.Window
         };
 
-        Grid.SetRow(_tabControl, 0);
+        Grid.SetRow(editorContainer, 0);
         Grid.SetRow(_splitter, 1);
         Grid.SetRow(_bottomPanel, 2);
 
-        _editorArea.Children.Add(_tabControl);
+        _editorArea.Children.Add(editorContainer);
         _editorArea.Children.Add(_splitter);
         _editorArea.Children.Add(_bottomPanel);
+
+        // Panneau IA latéral droit rétractable
+        _aiPanel = new AiPanel();
+        _aiPanel.CloseRequested += () => SetAiPanelVisible(false);
+        _aiPanel.MessageSubmitted += async (msg, mode, model, thinking, atts) =>
+        {
+            _aiPanel.SetAssistantState(AssistantVisualState.Generating);
+            await Task.Delay(300);
+
+            var tab = _tabManager.ActiveTab;
+            string docInfo = tab != null ? $"Fichier actif : {tab.Document.Name}" : "Aucun fichier ouvert";
+
+            if (msg.Contains("aide", StringComparison.OrdinalIgnoreCase) || msg.Contains("help", StringComparison.OrdinalIgnoreCase))
+            {
+                _aiPanel.AddAssistantMessage($"Bonjour ! Je suis l'assistant IA de KEYCE KODER.\nMode : {mode} | Modèle : {model} | {docInfo}\n\nPosez vos questions ou décrivez les modifications souhaitées.");
+            }
+            else
+            {
+                _aiPanel.AddAssistantMessage($"[KEYCE IA - {model}]\nDemande reçue ({mode}) : « {msg} »\n\nContexte : {docInfo}.\nAssistant prêt.");
+            }
+            _aiPanel.SetAssistantState(AssistantVisualState.Ready);
+        };
+
+        _aiSplitter = new GridSplitter
+        {
+            Width = 4,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            ResizeDirection = GridResizeDirection.Columns,
+            ResizeBehavior = GridResizeBehavior.PreviousAndNext,
+            Background = Theme.Window,
+            Visibility = Visibility.Collapsed
+        };
+
+        _aiHost = new Border
+        {
+            Background = Theme.Sidebar,
+            BorderBrush = Theme.Border,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Margin = new Thickness(0, 4, 4, 4),
+            ClipToBounds = true,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Visibility = Visibility.Collapsed,
+            Child = _aiPanel
+        };
 
         // Style des panneaux arrondis Astou
         activityBar.CornerRadius = new CornerRadius(8);
@@ -283,19 +401,25 @@ public class MainWindow : Window
             Child = _editorArea
         };
 
-        // Mise en page horizontale principale : Activity Bar | Sidebar | Editeur
+        // Mise en page horizontale principale : ActivityBar | Sidebar | Editeur | Séparateur IA | Panneau IA
         var mainGrid = new Grid();
         mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        mainGrid.ColumnDefinitions.Add(_aiCol);
 
         Grid.SetColumn(activityBar, 0);
         Grid.SetColumn(sidebar, 1);
         Grid.SetColumn(editorHost, 2);
+        Grid.SetColumn(_aiSplitter, 3);
+        Grid.SetColumn(_aiHost, 4);
 
         mainGrid.Children.Add(activityBar);
         mainGrid.Children.Add(sidebar);
         mainGrid.Children.Add(editorHost);
+        mainGrid.Children.Add(_aiSplitter);
+        mainGrid.Children.Add(_aiHost);
 
         // Construction des menus pour la TopBar Astou
         MenuItem MakeItem(string header, Action action, string gesture = "", bool enabled = true)
@@ -309,11 +433,12 @@ public class MainWindow : Window
         selectMenu.Items.Add(MakeItem("Tout sélectionner", () => _tabManager.ActiveTab?.Actions.SelectAll(), "Ctrl+A"));
 
         var viewMenu = new MenuItem { Header = "Affichage" };
+        viewMenu.Items.Add(MakeItem("Page d'accueil", ShowWelcome));
         viewMenu.Items.Add(MakeItem("Explorateur", () => sidebar.ShowView("explorer")));
         viewMenu.Items.Add(MakeItem("Recherche", () => sidebar.ShowView("search")));
         viewMenu.Items.Add(MakeItem("Contrôle de source", () => sidebar.ShowView("git")));
         viewMenu.Items.Add(MakeItem("Exécuter et déboguer", () => sidebar.ShowView("debug")));
-        viewMenu.Items.Add(MakeItem("Assistant IA", () => sidebar.ShowView("ai")));
+        viewMenu.Items.Add(MakeItem("Assistant IA", ToggleAiPanel, "Ctrl+I"));
         viewMenu.Items.Add(new Separator());
         viewMenu.Items.Add(MakeItem("Afficher / masquer la barre latérale", sidebar.Toggle, "Ctrl+B"));
         viewMenu.Items.Add(MakeItem("Afficher / masquer le panneau du bas", ToggleBottomPanelVisibility));
@@ -362,6 +487,13 @@ public class MainWindow : Window
 
         var topBar = new TopBar(topMenus, () => sidebar.ShowView("search"));
         topBar.SettingsRequested += ShowSettings;
+        topBar.AiToggleRequested += ToggleAiPanel;
+
+        // Contrôles de fenêtre dans la TopBar
+        topBar.MinimizeRequested += () => WindowState = WindowState.Minimized;
+        topBar.MaximizeRestoreRequested += () => WindowState = (WindowState == WindowState.Maximized) ? WindowState.Normal : WindowState.Maximized;
+        topBar.CloseAppRequested += () => Close();
+        StateChanged += (_, _) => topBar.UpdateMaximizedState(WindowState == WindowState.Maximized);
 
         // Structure DockPanel racine
         var root = new DockPanel();
@@ -374,8 +506,23 @@ public class MainWindow : Window
         root.Children.Add(mainGrid);
         Content = root;
 
+        // Réaction dynamique au thème
+        Theme.ThemeChanged += _ =>
+        {
+            Background = Theme.Window;
+            Foreground = Theme.Text;
+            _tabControl.Background = Theme.Editor;
+            _splitter.Background = Theme.Window;
+            _aiSplitter.Background = Theme.Window;
+            _aiHost.Background = Theme.Sidebar;
+            _aiHost.BorderBrush = Theme.Border;
+            editorHost.Background = Theme.Editor;
+            editorHost.BorderBrush = Theme.Border;
+        };
+
         // Raccourcis clavier globaux
         AddShortcut(sidebar.Toggle, Key.B, ModifierKeys.Control);
+        AddShortcut(ToggleAiPanel, Key.I, ModifierKeys.Control);
         AddShortcut(() => _ = OnF5Async(), Key.F5, ModifierKeys.None);
         AddShortcut(_bottomPanel.RequestRun, Key.F5, ModifierKeys.Control);
         AddShortcut(() =>
@@ -426,6 +573,45 @@ public class MainWindow : Window
         AddShortcut(_editActions.UnfoldAll, Key.U, ModifierKeys.Control | ModifierKeys.Alt);
 
         Closing += OnWindowClosing;
+
+        // Mise à jour initiale de l'affichage (Welcome affiché si aucun document)
+        UpdateWelcomeVisibility();
+    }
+
+    private void SetAiPanelVisible(bool visible)
+    {
+        if (visible)
+        {
+            _aiCol.Width = _savedAiWidth.Value > 100 ? _savedAiWidth : new GridLength(320);
+            _aiHost.Visibility = Visibility.Visible;
+            _aiSplitter.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            if (_aiCol.Width.Value > 100)
+                _savedAiWidth = _aiCol.Width;
+            _aiCol.Width = GridLength.Auto;
+            _aiHost.Visibility = Visibility.Collapsed;
+            _aiSplitter.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void ToggleAiPanel()
+    {
+        SetAiPanelVisible(_aiHost.Visibility != Visibility.Visible);
+    }
+
+    private void ShowWelcome()
+    {
+        _welcomeView.Visibility = Visibility.Visible;
+        _tabControl.Visibility = Visibility.Collapsed;
+    }
+
+    private void UpdateWelcomeVisibility()
+    {
+        bool hasDocs = _tabManager.Tabs.Count > 0 || _pdfViewers.Count > 0;
+        _welcomeView.Visibility = hasDocs ? Visibility.Collapsed : Visibility.Visible;
+        _tabControl.Visibility = hasDocs ? Visibility.Visible : Visibility.Collapsed;
     }
 
     public void ShowSettings()
@@ -623,6 +809,7 @@ public class MainWindow : Window
         if (existing is not null)
         {
             _tabControl.SelectedItem = existing.TabItem;
+            UpdateWelcomeVisibility();
             return true;
         }
 
@@ -636,6 +823,7 @@ public class MainWindow : Window
         _pdfViewers.Add(viewer);
         _tabControl.Items.Add(viewer.TabItem);
         _tabControl.SelectedItem = viewer.TabItem;
+        UpdateWelcomeVisibility();
         return true;
     }
 
@@ -661,6 +849,7 @@ public class MainWindow : Window
         _tabControl.Items.Remove(viewer.TabItem);
         viewer.Cleanup();
         UpdateWindowState();
+        UpdateWelcomeVisibility();
         return true;
     }
 

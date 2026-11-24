@@ -97,6 +97,19 @@ public sealed class AppSettings
     public string AiModel { get; set; } = "Gemini 1.5 Pro";
     public bool AiThinkingEnabled { get; set; } = true;
 
+    // 8. Projets récents
+    public List<string> RecentProjects { get; set; } = new();
+
+    public void AddRecentProject(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        RecentProjects.RemoveAll(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
+        RecentProjects.Insert(0, path);
+        if (RecentProjects.Count > 10)
+            RecentProjects.RemoveRange(10, RecentProjects.Count - 10);
+        Save();
+    }
+
     public static AppSettings Load()
     {
         try

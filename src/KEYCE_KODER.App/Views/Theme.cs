@@ -1,4 +1,5 @@
 using System;
+using System.Windows;
 using System.Windows.Media;
 
 namespace KEYCE_KODER.App.Views;
@@ -134,6 +135,22 @@ public static class Theme
             SetColor(Muted, 145, 151, 167);
             SetColor(Border, 32, 48, 78);
             SetColor(GridLine, 26, 40, 66);
+        }
+
+        // Mise à jour des dictionnaires de ressources globales pour DynamicResource
+        if (Application.Current != null)
+        {
+            try
+            {
+                Application.Current.Resources["KK.Track"] = Editor;
+                Application.Current.Resources["KK.Thumb"] = SurfaceHover;
+                Application.Current.Resources["KK.ThumbHover"] = Muted;
+                Application.Current.Resources["KK.Arrow"] = Muted;
+            }
+            catch
+            {
+                // Ignorer en mode test unitaire sans Application WPF
+            }
         }
 
         ThemeChanged?.Invoke(CurrentTheme);

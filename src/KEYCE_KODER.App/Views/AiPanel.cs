@@ -33,6 +33,7 @@ public sealed class AiPanel : Border
 {
     public event Action<string, AiMode, string, bool, IReadOnlyList<string>>? MessageSubmitted;
     public event Action? ClearRequested;
+    public event Action? CloseRequested;
     public event Action<string>? ProposalAccepted;
     public event Action<string>? ProposalRejected;
 
@@ -41,6 +42,7 @@ public sealed class AiPanel : Border
     private readonly Button _agentModeBtn = new();
     private readonly Button _thinkingBtn = new();
     private readonly Button _clearBtn = new();
+    private readonly Button _closeBtn = new();
 
     private readonly Border _statusDot = new();
     private readonly TextBlock _statusText = new();
@@ -138,13 +140,16 @@ public sealed class AiPanel : Border
         Grid.SetColumn(modeSelector, 0);
         modeRow.Children.Add(modeSelector);
 
-        // Bouton vider / nouvelle conversation
+        // Boutons à droite : vider et fermer
+        var rightBtns = new StackPanel { Orientation = Orientation.Horizontal };
+
         _clearBtn.Content = SvgIconFactory.Create("trash", 14);
         _clearBtn.ToolTip = "Nouvelle conversation";
         _clearBtn.Background = Brushes.Transparent;
         _clearBtn.BorderThickness = new Thickness(0);
         _clearBtn.Width = 28;
         _clearBtn.Height = 28;
+        _clearBtn.Margin = new Thickness(0, 0, 4, 0);
         _clearBtn.Cursor = Cursors.Hand;
         _clearBtn.Click += (_, _) =>
         {
@@ -154,8 +159,20 @@ public sealed class AiPanel : Border
             ShowWelcomeMessage();
             ClearRequested?.Invoke();
         };
-        Grid.SetColumn(_clearBtn, 1);
-        modeRow.Children.Add(_clearBtn);
+        rightBtns.Children.Add(_clearBtn);
+
+        _closeBtn.Content = SvgIconFactory.Create("close", 14);
+        _closeBtn.ToolTip = "Masquer le panneau IA";
+        _closeBtn.Background = Brushes.Transparent;
+        _closeBtn.BorderThickness = new Thickness(0);
+        _closeBtn.Width = 28;
+        _closeBtn.Height = 28;
+        _closeBtn.Cursor = Cursors.Hand;
+        _closeBtn.Click += (_, _) => CloseRequested?.Invoke();
+        rightBtns.Children.Add(_closeBtn);
+
+        Grid.SetColumn(rightBtns, 1);
+        modeRow.Children.Add(rightBtns);
 
         Grid.SetRow(modeRow, 0);
         headerGrid.Children.Add(modeRow);

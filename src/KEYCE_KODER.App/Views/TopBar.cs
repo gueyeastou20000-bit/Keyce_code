@@ -8,11 +8,18 @@ using System.Windows.Media;
 
 namespace KEYCE_KODER.App.Views;
 
-/// <summary>Barre du haut : boutons de menu, recherche au centre, icônes SVG à droite.</summary>
+/// <summary>
+/// Barre supérieure de KEYCE KODER :
+/// Menus déroulants, recherche au centre, bouton IA, Paramètres, et contrôles de fenêtre (Réduire, Agrandir, Fermer).
+/// </summary>
 public class TopBar : Border
 {
     private readonly Action _onSearch;
     public event Action? SettingsRequested;
+    public event Action? AiToggleRequested;
+    public event Action? MinimizeRequested;
+    public event Action? MaximizeRestoreRequested;
+    public event Action? CloseAppRequested;
 
     private readonly Popup _popup = new();
     private readonly Popup _subPopup = new();
@@ -23,12 +30,23 @@ public class TopBar : Border
     private MenuItem? _openSub;
     private Window? _window;
 
+    private readonly TextBlock _maxBtnText = new() { Text = "□", FontSize = 14, VerticalAlignment = VerticalAlignment.Center };
+
     public TopBar(IReadOnlyList<MenuItem> source, Action onSearch)
     {
         _onSearch = onSearch;
         Background = Theme.Window;
         Height = 42;
+        BorderBrush = Theme.Border;
+        BorderThickness = new Thickness(0, 0, 0, 1);
 
+        Theme.ThemeChanged += _ =>
+        {
+            Background = Theme.Window;
+            BorderBrush = Theme.Border;
+        };
+
+        // Menus
         var menuStrip = new StackPanel
         {
             Orientation = Orientation.Horizontal,
@@ -42,7 +60,7 @@ public class TopBar : Border
             menuStrip.Children.Add(button);
         }
 
-        // Menus (taille du contenu) | recherche (le reste) | icônes
+        // Layout : Menus (Auto) | Recherche (Star) | Actions & Contrôles (Auto)
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -54,26 +72,56 @@ public class TopBar : Border
         UIElement search = BuildSearchBox();
         if (search is FrameworkElement sf)
         {
-            sf.MaxWidth = 520;
+            sf.MaxWidth = 460;
             sf.Margin = new Thickness(12, 0, 12, 0);
         }
         Grid.SetColumn(search, 1);
         grid.Children.Add(search);
 
+        // Zone droite : IA + Paramètres + Notifications + Boutons Système
         var right = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Right,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 10, 0)
+            VerticalAlignment = VerticalAlignment.Stretch
         };
 
-        var settingsBtn = MakeSvgIconButton("settings", "Paramètres");
-        settingsBtn.MouseLeftButtonUp += (_, _) => SettingsRequested?.Invoke();
+        // Bouton Assistant IA (icône SVG)
+        var aiBtn = MakeSvgIconButton("ai", "Assistant IA Copilot (Ctrl+I)");
+        aiBtn.MouseLeftButtonUp += (_, e) =>
+        {
+            e.Handled = true;
+            AiToggleRequested?.Invoke();
+        };
+        right.Children.Add(aiBtn);
+
+        // Bouton Paramètres
+        var settingsBtn = MakeSvgIconButton("settings", "Paramètres (Ctrl+,)");
+        settingsBtn.MouseLeftButtonUp += (_, e) =>
+        {
+            e.Handled = true;
+            SettingsRequested?.Invoke();
+        };
         right.Children.Add(settingsBtn);
 
+        // Bouton Notifications
         var bellBtn = MakeSvgIconButton("bell", "Notifications");
         right.Children.Add(bellBtn);
+
+        // Séparateur vertical discret
+        right.Children.Add(new Border
+        {
+            Width = 1,
+            Height = 16,
+            Background = Theme.Border,
+            Margin = new Thickness(8, 0, 6, 0),
+            VerticalAlignment = VerticalAlignment.Center
+        });
+
+        // Contrôles de la fenêtre Windows (Réduire, Agrandir, Fermer)
+        right.Children.Add(MakeWindowButton("—", "Réduire", () => MinimizeRequested?.Invoke()));
+        right.Children.Add(MakeWindowMaxButton());
+        right.Children.Add(MakeWindowCloseButton());
 
         Grid.SetColumn(right, 2);
         grid.Children.Add(right);
@@ -82,6 +130,158 @@ public class TopBar : Border
 
         SetupPopup(_popup, _panel, PlacementMode.Bottom, 240);
         SetupPopup(_subPopup, _subPanel, PlacementMode.Right, 240);
+
+        // Déplacement de la fenêtre par glisser-déposer sur la TopBar
+        MouseLeftButtonDown += (s, e) =>
+        {
+            if (e.OriginalSource is DependencyObject dep && IsInsideInteractiveControl(dep))
+                return;
+
+            _window ??= Window.GetWindow(this);
+            if (_window == null) return;
+
+            if (e.ClickCount == 2)
+            {
+                MaximizeRestoreRequested?.Invoke();
+            }
+            else if (e.LeftButton == MouseButtonState.Pressed)
+            {
+                _window.DragMove();
+            }
+        };
+    }
+
+    private static bool IsInsideInteractiveControl(DependencyObject element)
+    {
+        DependencyObject? curr = element;
+        while (curr != null && curr is not TopBar)
+        {
+            if (curr is Button or TextBox or MenuItem) return true;
+            if (curr is FrameworkElement fe && (fe.Cursor == Cursors.Hand || fe.Tag?.ToString() == "interactive"))
+                return true;
+            curr = VisualTreeHelper.GetParent(curr);
+        }
+        return false;
+    }
+
+    public void UpdateMaximizedState(bool isMaximized)
+    {
+        _maxBtnText.Text = isMaximized ? "❐" : "□";
+    }
+
+    private Border MakeWindowButton(string symbol, string tooltip, Action onClick)
+    {
+        var text = new TextBlock
+        {
+            Text = symbol,
+            Foreground = Theme.Muted,
+            FontSize = 13,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        var btn = new Border
+        {
+            Width = 44,
+            Height = 42,
+            Background = Brushes.Transparent,
+            Cursor = Cursors.Hand,
+            ToolTip = tooltip,
+            Child = text
+        };
+
+        btn.MouseEnter += (_, _) =>
+        {
+            btn.Background = Theme.SurfaceHover;
+            text.Foreground = Theme.Text;
+        };
+        btn.MouseLeave += (_, _) =>
+        {
+            btn.Background = Brushes.Transparent;
+            text.Foreground = Theme.Muted;
+        };
+        btn.MouseLeftButtonUp += (_, e) =>
+        {
+            e.Handled = true;
+            onClick();
+        };
+
+        return btn;
+    }
+
+    private Border MakeWindowMaxButton()
+    {
+        _maxBtnText.Foreground = Theme.Muted;
+        _maxBtnText.HorizontalAlignment = HorizontalAlignment.Center;
+        _maxBtnText.VerticalAlignment = VerticalAlignment.Center;
+
+        var btn = new Border
+        {
+            Width = 44,
+            Height = 42,
+            Background = Brushes.Transparent,
+            Cursor = Cursors.Hand,
+            ToolTip = "Agrandir / Restaurer",
+            Child = _maxBtnText
+        };
+
+        btn.MouseEnter += (_, _) =>
+        {
+            btn.Background = Theme.SurfaceHover;
+            _maxBtnText.Foreground = Theme.Text;
+        };
+        btn.MouseLeave += (_, _) =>
+        {
+            btn.Background = Brushes.Transparent;
+            _maxBtnText.Foreground = Theme.Muted;
+        };
+        btn.MouseLeftButtonUp += (_, e) =>
+        {
+            e.Handled = true;
+            MaximizeRestoreRequested?.Invoke();
+        };
+
+        return btn;
+    }
+
+    private Border MakeWindowCloseButton()
+    {
+        var text = new TextBlock
+        {
+            Text = "✕",
+            Foreground = Theme.Muted,
+            FontSize = 12,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        var btn = new Border
+        {
+            Width = 44,
+            Height = 42,
+            Background = Brushes.Transparent,
+            Cursor = Cursors.Hand,
+            ToolTip = "Fermer",
+            Child = text
+        };
+
+        btn.MouseEnter += (_, _) =>
+        {
+            btn.Background = Theme.Red;
+            text.Foreground = Brushes.White;
+        };
+        btn.MouseLeave += (_, _) =>
+        {
+            btn.Background = Brushes.Transparent;
+            text.Foreground = Theme.Muted;
+        };
+        btn.MouseLeftButtonUp += (_, e) =>
+        {
+            e.Handled = true;
+            CloseAppRequested?.Invoke();
+        };
+
+        return btn;
     }
 
     private static void SetupPopup(Popup popup, Panel content, PlacementMode placement, double minWidth)
@@ -110,17 +310,18 @@ public class TopBar : Border
 
     private static Border MakeSvgIconButton(string iconName, string tip)
     {
-        var icon = SvgIconFactory.Create(iconName, 16);
+        var icon = SvgIconFactory.Create(iconName, 15);
         icon.HorizontalAlignment = HorizontalAlignment.Center;
         icon.VerticalAlignment = VerticalAlignment.Center;
 
         var b = new Border
         {
-            Width = 32,
+            Width = 34,
             Height = 32,
             Background = Brushes.Transparent,
             CornerRadius = new CornerRadius(6),
-            Margin = new Thickness(4, 0, 0, 0),
+            Margin = new Thickness(2, 0, 2, 0),
+            VerticalAlignment = VerticalAlignment.Center,
             ToolTip = tip,
             Cursor = Cursors.Hand,
             Child = icon

@@ -1,141 +1,337 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using KEYCE_KODER.App.Services;
 
 namespace KEYCE_KODER.App.Views;
 
-public sealed class WelcomeView : StackPanel
+public sealed class WelcomeView : Border
 {
+    public event Action? NewFileRequested;
+    public event Action? OpenFileRequested;
     public event Action? OpenFolderRequested;
+    public event Action? NewFolderRequested;
     public event Action<string>? OpenRecentFolderRequested;
 
     private readonly StackPanel _recentList = new();
 
     public WelcomeView()
     {
-        Margin = new Thickness(16, 8, 16, 16);
+        Background = Theme.Editor;
+        Padding = new Thickness(32, 24, 32, 24);
 
-        Children.Add(new TextBlock
+        // Réaction dynamique au thème
+        Theme.ThemeChanged += _ =>
         {
-            Text = "BIENVENUE",
-            Foreground = Theme.Text,
-            FontSize = 18,
-            FontWeight = FontWeights.Bold,
-            Margin = new Thickness(0, 0, 0, 10)
-        });
-
-        Children.Add(new TextBlock
-        {
-            Text = "Commencez un nouveau projet ou ouvrez un dossier existant.",
-            Foreground = Theme.Muted,
-            TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 0, 0, 16)
-        });
-
-        var open = new Button
-        {
-            Content = "Ouvrir un dossier",
-            Height = 34,
-            Background = Theme.Accent,
-            Foreground = System.Windows.Media.Brushes.White,
-            BorderThickness = new Thickness(0),
-            Cursor = Cursors.Hand
+            Background = Theme.Editor;
+            RefreshRecentProjects();
         };
-        open.Click += (_, _) => OpenFolderRequested?.Invoke();
-        Children.Add(open);
 
-        Children.Add(new TextBlock
+        var scroll = new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+        };
+
+        var container = new StackPanel
+        {
+            MaxWidth = 720,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        // --- En-tête : Logo et Titres ---
+        var headerSp = new StackPanel
+        {
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 32)
+        };
+
+        try
+        {
+            string logoPath = Path.Combine(AppContext.BaseDirectory, "Assets", "logo.png");
+            if (!File.Exists(logoPath))
+                logoPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "Assets", "logo.png");
+
+            if (File.Exists(logoPath))
+            {
+                var bitmap = new BitmapImage();
+                bitmap.BeginInit();
+                bitmap.UriSource = new Uri(Path.GetFullPath(logoPath), UriKind.Absolute);
+                bitmap.CacheOption = BitmapCacheOption.OnLoad;
+                bitmap.DecodePixelWidth = 100;
+                bitmap.EndInit();
+                bitmap.Freeze();
+
+                headerSp.Children.Add(new Image
+                {
+                    Source = bitmap,
+                    Width = 54,
+                    Height = 54,
+                    Margin = new Thickness(0, 0, 0, 12),
+                    HorizontalAlignment = HorizontalAlignment.Center
+                });
+            }
+        }
+        catch
+        {
+            // Pas de logo
+        }
+
+        headerSp.Children.Add(new TextBlock
+        {
+            Text = "KEYCE KODER",
+            FontSize = 26,
+            FontWeight = FontWeights.Bold,
+            Foreground = Theme.Text,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 4)
+        });
+
+        headerSp.Children.Add(new TextBlock
+        {
+            Text = "Environnement de développement & Éditeur de code WPF / .NET 10",
+            FontSize = 13,
+            Foreground = Theme.Muted,
+            HorizontalAlignment = HorizontalAlignment.Center
+        });
+
+        container.Children.Add(headerSp);
+
+        // --- Corps à deux colonnes : Commencer / Récents ---
+        var bodyGrid = new Grid();
+        bodyGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        bodyGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) }); // Espace
+        bodyGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        // Colonne gauche : Démarrer
+        var leftSp = new StackPanel();
+        leftSp.Children.Add(new TextBlock
+        {
+            Text = "COMMENCER",
+            FontSize = 12,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = Theme.Accent,
+            Margin = new Thickness(0, 0, 0, 12)
+        });
+
+        leftSp.Children.Add(MakeActionButton("Nouveau fichier", "Ctrl+N", "file", () => NewFileRequested?.Invoke()));
+        leftSp.Children.Add(MakeActionButton("Ouvrir un fichier…", "Ctrl+O", "file", () => OpenFileRequested?.Invoke()));
+        leftSp.Children.Add(MakeActionButton("Ouvrir un dossier / projet…", "", "folder", () => OpenFolderRequested?.Invoke()));
+        leftSp.Children.Add(MakeActionButton("Nouveau dossier…", "", "folder", () => NewFolderRequested?.Invoke()));
+
+        Grid.SetColumn(leftSp, 0);
+        bodyGrid.Children.Add(leftSp);
+
+        // Colonne droite : Projets récents
+        var rightSp = new StackPanel();
+        rightSp.Children.Add(new TextBlock
         {
             Text = "PROJETS RÉCENTS",
-            Foreground = Theme.Muted,
-            FontSize = 11,
+            FontSize = 12,
             FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(0, 18, 0, 6)
+            Foreground = Theme.Accent,
+            Margin = new Thickness(0, 0, 0, 12)
         });
+
         _recentList.Margin = new Thickness(0, 0, 0, 8);
-        Children.Add(_recentList);
+        rightSp.Children.Add(_recentList);
 
-        Children.Add(new TextBlock
+        Grid.SetColumn(rightSp, 2);
+        bodyGrid.Children.Add(rightSp);
+
+        container.Children.Add(bodyGrid);
+
+        // --- Raccourcis utiles en bas ---
+        var shortcutBorder = new Border
         {
-            Text = "RACCOURCIS",
-            Foreground = Theme.Muted,
-            FontSize = 11,
-            FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(0, 24, 0, 8)
-        });
+            Background = Theme.Surface,
+            BorderBrush = Theme.Border,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(16, 12, 16, 12),
+            Margin = new Thickness(0, 32, 0, 0)
+        };
 
-        Children.Add(Shortcut("Palette de commandes", "Ctrl + Maj + P"));
-        Children.Add(Shortcut("Afficher l'explorateur", "Ctrl + B"));
-        Children.Add(Shortcut("Exécuter", "F5"));
-        Children.Add(Shortcut("Enregistrer", "Ctrl + S"));
+        var shGrid = new Grid();
+        shGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        shGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var shLeft = new StackPanel();
+        shLeft.Children.Add(MakeShortcutRow("Recherche globale", "Ctrl + K"));
+        shLeft.Children.Add(MakeShortcutRow("Afficher / Masquer la barre latérale", "Ctrl + B"));
+
+        var shRight = new StackPanel();
+        shRight.Children.Add(MakeShortcutRow("Exécuter le fichier actif (Run)", "F5"));
+        shRight.Children.Add(MakeShortcutRow("Assistant IA Copilot", "Ctrl + I"));
+
+        Grid.SetColumn(shLeft, 0);
+        Grid.SetColumn(shRight, 1);
+        shGrid.Children.Add(shLeft);
+        shGrid.Children.Add(shRight);
+
+        shortcutBorder.Child = shGrid;
+        container.Children.Add(shortcutBorder);
+
+        scroll.Content = container;
+        Child = scroll;
+
+        RefreshRecentProjects();
     }
 
-    private static Grid Shortcut(string name, string keys)
+    private Border MakeActionButton(string title, string gesture, string icon, Action onClick)
     {
-        var grid = new Grid { Margin = new Thickness(0, 4, 0, 4) };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var btn = new Border
+        {
+            Background = Theme.Surface,
+            BorderBrush = Theme.Border,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Height = 38,
+            Margin = new Thickness(0, 0, 0, 8),
+            Padding = new Thickness(12, 0, 12, 0),
+            Cursor = Cursors.Hand
+        };
+
+        var dock = new DockPanel();
+
+        if (!string.IsNullOrEmpty(gesture))
+        {
+            var gestBlock = new TextBlock
+            {
+                Text = gesture,
+                Foreground = Theme.Muted,
+                FontSize = 11,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            DockPanel.SetDock(gestBlock, Dock.Right);
+            dock.Children.Add(gestBlock);
+        }
+
+        var sp = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        var iconElem = SvgIconFactory.Create(icon, 15);
+        iconElem.Margin = new Thickness(0, 0, 8, 0);
+        sp.Children.Add(iconElem);
+
+        sp.Children.Add(new TextBlock
+        {
+            Text = title,
+            Foreground = Theme.Text,
+            FontSize = 13,
+            VerticalAlignment = VerticalAlignment.Center
+        });
+
+        dock.Children.Add(sp);
+        btn.Child = dock;
+
+        btn.MouseEnter += (_, _) => btn.Background = Theme.SurfaceHover;
+        btn.MouseLeave += (_, _) => btn.Background = Theme.Surface;
+        btn.MouseLeftButtonUp += (_, e) =>
+        {
+            e.Handled = true;
+            onClick();
+        };
+        return btn;
+    }
+
+    public void RefreshRecentProjects()
+    {
+        _recentList.Children.Clear();
+        var recents = AppSettings.Current.RecentProjects;
+
+        if (recents == null || recents.Count == 0)
+        {
+            _recentList.Children.Add(new TextBlock
+            {
+                Text = "Aucun dossier ou projet récent.",
+                Foreground = Theme.Muted,
+                FontSize = 12,
+                Margin = new Thickness(0, 4, 0, 4)
+            });
+            return;
+        }
+
+        foreach (var path in recents.Take(6))
+        {
+            string folderName = Path.GetFileName(path);
+            if (string.IsNullOrEmpty(folderName)) folderName = path;
+
+            var btn = new Button
+            {
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                Cursor = Cursors.Hand,
+                Padding = new Thickness(6, 6, 6, 6),
+                Margin = new Thickness(0, 0, 0, 4),
+                HorizontalContentAlignment = HorizontalAlignment.Stretch
+            };
+
+            var sp = new StackPanel();
+            sp.Children.Add(new TextBlock
+            {
+                Text = folderName,
+                Foreground = Theme.Text,
+                FontSize = 13,
+                FontWeight = FontWeights.SemiBold
+            });
+
+            sp.Children.Add(new TextBlock
+            {
+                Text = path,
+                Foreground = Theme.Muted,
+                FontSize = 10,
+                TextTrimming = TextTrimming.CharacterEllipsis
+            });
+
+            btn.Content = sp;
+            btn.MouseEnter += (_, _) => btn.Background = Theme.SurfaceHover;
+            btn.MouseLeave += (_, _) => btn.Background = Brushes.Transparent;
+            btn.Click += (_, _) => OpenRecentFolderRequested?.Invoke(path);
+
+            _recentList.Children.Add(btn);
+        }
+    }
+
+    private static Grid MakeShortcutRow(string name, string key)
+    {
+        var g = new Grid { Margin = new Thickness(0, 3, 0, 3) };
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         var nameBlock = new TextBlock
         {
             Text = name,
             Foreground = Theme.Text,
-            FontSize = 12
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center
         };
-        var keyBlock = new TextBlock
-        {
-            Text = keys,
-            Foreground = Theme.Muted,
-            FontSize = 11
-        };
-
         Grid.SetColumn(nameBlock, 0);
-        Grid.SetColumn(keyBlock, 1);
-        grid.Children.Add(nameBlock);
-        grid.Children.Add(keyBlock);
-        return grid;
-    }
+        g.Children.Add(nameBlock);
 
-    public void AddRecentFolder(string folderPath)
-    {
-        var item = new Button
+        var keyBadge = new Border
         {
-            Content = folderPath,
-            Style = (Style)Application.Current.Resources["RecentFolderButton"],
-            Margin = new Thickness(0, 4, 0, 4),
-            Cursor = Cursors.Hand
+            Background = Theme.Editor,
+            BorderBrush = Theme.Border,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(3),
+            Padding = new Thickness(5, 1, 5, 1)
         };
-        item.Click += (_, _) => OpenRecentFolderRequested?.Invoke(folderPath);
-
-        _recentList.Children.Insert(0, item);
-
-        if (_recentList.Children.Count > 5)
-            _recentList.Children.RemoveAt(_recentList.Children.Count - 1);
-    }
-
-    public void SetRecentFolders(IEnumerable<string> folders)
-    {
-        _recentList.Children.Clear();
-        foreach (var folder in folders)
+        keyBadge.Child = new TextBlock
         {
-            var button = new Button
-            {
-                Content = folder,
-                Height = 30,
-                Margin = new Thickness(0, 2, 0, 2),
-                Padding = new Thickness(8, 0, 8, 0),
-                HorizontalContentAlignment = HorizontalAlignment.Left,
-                Background = Brushes.Transparent,
-                Foreground = Theme.Text,
-                BorderBrush = Theme.Border,
-                BorderThickness = new Thickness(0, 0, 0, 1),
-                Cursor = Cursors.Hand
-            };
-            button.Click += (_, _) => OpenRecentFolderRequested?.Invoke(folder);
-            _recentList.Children.Add(button);
-        }
+            Text = key,
+            Foreground = Theme.Accent,
+            FontSize = 11,
+            FontWeight = FontWeights.SemiBold
+        };
+        Grid.SetColumn(keyBadge, 1);
+        g.Children.Add(keyBadge);
+
+        return g;
     }
 }
