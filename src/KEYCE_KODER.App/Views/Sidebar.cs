@@ -2,6 +2,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using KEYCE_KODER.App.Git;
 using KEYCE_KODER.App.Search;
 
 namespace KEYCE_KODER.App.Views;
@@ -21,6 +22,7 @@ public class Sidebar : Border
 
     public ExplorerView Explorer { get; } = new();
     public SearchPanel Search { get; }
+    public GitPanel SourceControl { get; }
     public WelcomeView Welcome { get; } = new();
     public SettingsView Settings { get; } = new();
 
@@ -35,6 +37,14 @@ public class Sidebar : Border
 
         Search = new SearchPanel(() => Explorer.CurrentFolder);
         _views["search"] = Search;
+
+        // Contrôle de source (Git) : suit le dossier ouvert dans l'explorateur
+        SourceControl = new GitPanel(() => Explorer.CurrentFolder);
+        _views["git"] = SourceControl;
+
+        Explorer.CurrentPathChanged += _ => SourceControl.OnFolderChanged();
+        SourceControl.ChooseFolderRequested += Explorer.ChooseFolder;
+        SourceControl.FolderOpenRequested += Explorer.OpenFolder;
 
         _views["home"] = Welcome;
         _views["settings"] = Settings;
@@ -56,6 +66,7 @@ public class Sidebar : Border
         {
             "explorer" => "EXPLORATEUR",
             "search" => "RECHERCHE",
+            "git" => "CONTRÔLE DE SOURCE",
             "home" => "ACCUEIL",
             "settings" => "PARAMÈTRES",
             _ => id.ToUpperInvariant()

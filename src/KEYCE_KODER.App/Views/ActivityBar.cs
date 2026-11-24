@@ -23,6 +23,7 @@ public class ActivityBar : Border
 
         AddButton("explorer", "explorer", "Explorateur");
         AddButton("search", "search", "Recherche");
+        AddButton("git", "git", "Contrôle de source (Git)");
         AddTextButton("home", "⌂", "Accueil");
         AddTextButton("settings", "⚙", "Paramètres");
 

@@ -155,6 +155,11 @@ public class MainWindow : Window
         sidebar.Explorer.FileOpenRequested +=
     path => _ = _fileActions.OpenPathAsync(path);
 
+        // Contrôle de source (Git) : ouvrir un fichier modifié, recharger les onglets après un pull
+        sidebar.SourceControl.FileOpenRequested +=
+            path => _ = _fileActions.OpenPathAsync(path);
+        sidebar.SourceControl.WorkingTreeChanged += ReloadTabsFromDisk;
+
         // Recherche dans les fichiers : ouvrir le fichier et surligner l'occurrence
         sidebar.Search.MatchOpenRequested += async (path, index, length) =>
         {
@@ -374,6 +379,39 @@ public class MainWindow : Window
     {
         _toolsWindow ??= new ToolsWindow(this);
         await _toolsWindow.ShowForAsync(highlightToolId);
+    }
+
+    /// <summary>
+    /// Git a modifié des fichiers sur le disque (pull, changement de branche, annulation) :
+    /// les onglets sans modification non enregistrée sont rechargés avec le nouveau contenu.
+    /// </summary>
+    private void ReloadTabsFromDisk()
+    {
+        foreach (EditorTab tab in _tabManager.Tabs)
+        {
+            string? path = tab.Document.FilePath;
+
+            // On ne touche jamais à un onglet modifié (●) : le travail non enregistré est conservé
+            if (path is null || tab.Document.IsDirty || !File.Exists(path))
+                continue;
+
+            try
+            {
+                string content = File.ReadAllText(path);
+                if (content == tab.EditorService.Text)
+                    continue;
+
+                tab.EditorService.Text = content;
+                tab.EditorService.MarkSaved();
+                tab.RefreshHeader();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Fichier verrouillé : l'onglet garde l'ancien contenu
+            }
+        }
+
+        UpdateWindowState();
     }
 
     private void UpdateWindowState()
