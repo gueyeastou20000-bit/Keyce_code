@@ -25,6 +25,7 @@ using KEYCE_KODER.App.Status;
 using KEYCE_KODER.App.Tabs;
 using KEYCE_KODER.App.Search;
 using KEYCE_KODER.App.Tools;
+using KEYCE_KODER.App.Pdf;
 
 namespace KEYCE_KODER.App;
 
@@ -40,6 +41,9 @@ public class MainWindow : Window
     private readonly EditorStatusBar _statusBar;
     private FindReplaceWindow? _findReplaceWindow;
     private ToolsWindow? _toolsWindow;
+
+    // Lecteurs PDF ouverts (un onglet par PDF)
+    private readonly List<PdfViewer> _pdfViewers = new();
     private bool _closeConfirmed;
     private readonly DocumentManager _documentManager;
     private readonly FileService _fileService;
@@ -91,6 +95,9 @@ public class MainWindow : Window
             _documentManager,
             _tabManager,
             new WpfDialogService(this));
+
+        // Les .pdf s'ouvrent dans le lecteur PDF au lieu de l'éditeur de texte
+        _fileActions.OpenSpecialFileAsync = OpenPdfAsync;
         // Menu Édition, barre de menus et barre d'état
         _editActions = new EditActions(_tabManager);
         _mainMenu = new MainMenu(_fileActions, _editActions, this);
@@ -270,9 +277,21 @@ public class MainWindow : Window
         // Raccourcis du menu Fichier et des onglets
         AddShortcut(_fileActions.NewFile, Key.N, ModifierKeys.Control);
         AddShortcut(async () => await _fileActions.OpenAsync(), Key.O, ModifierKeys.Control);
-        AddShortcut(async () => await _fileActions.SaveAsync(), Key.S, ModifierKeys.Control);
+        AddShortcut(async () =>
+        {
+            if (ActivePdf is PdfViewer pdf)
+                await pdf.SaveAsync();
+            else
+                await _fileActions.SaveAsync();
+        }, Key.S, ModifierKeys.Control);
         AddShortcut(async () => await _fileActions.SaveAsAsync(), Key.S, ModifierKeys.Control | ModifierKeys.Shift);
-        AddShortcut(async () => await _fileActions.CloseActiveAsync(), Key.W, ModifierKeys.Control);
+        AddShortcut(async () =>
+        {
+            if (ActivePdf is PdfViewer pdf)
+                await ClosePdfAsync(pdf);
+            else
+                await _fileActions.CloseActiveAsync();
+        }, Key.W, ModifierKeys.Control);
         AddShortcut(_tabManager.ActivateNext, Key.Tab, ModifierKeys.Control);
         AddShortcut(_tabManager.ActivatePrevious, Key.Tab, ModifierKeys.Control | ModifierKeys.Shift);
         AddShortcut(() => ShowFind(replaceMode: false), Key.F, ModifierKeys.Control);
@@ -414,8 +433,97 @@ public class MainWindow : Window
         UpdateWindowState();
     }
 
+    // =====================================================================
+    // Lecteur PDF
+    // =====================================================================
+
+    /// <summary>Lecteur PDF de l'onglet actif (null si l'onglet actif est un fichier texte).</summary>
+    private PdfViewer? ActivePdf => (_tabControl.SelectedItem as TabItem)?.Tag as PdfViewer;
+
+    /// <summary>
+    /// Appelé à chaque ouverture de fichier : si c'est un PDF, il s'ouvre dans le lecteur PDF.
+    /// Retourne true si le fichier a été pris en charge ici.
+    /// </summary>
+    private async Task<bool> OpenPdfAsync(string path)
+    {
+        if (!PdfViewer.IsPdf(path))
+            return false;
+
+        string fullPath = Path.GetFullPath(path);
+
+        // Déjà ouvert : on affiche simplement son onglet
+        PdfViewer? existing = _pdfViewers.FirstOrDefault(v =>
+            string.Equals(v.FilePath, fullPath, StringComparison.OrdinalIgnoreCase));
+
+        if (existing is not null)
+        {
+            _tabControl.SelectedItem = existing.TabItem;
+            return true;
+        }
+
+        PdfViewer? viewer = await PdfViewer.OpenAsync(fullPath, this);
+        if (viewer is null)
+            return true; // annulé ou erreur (message déjà affiché)
+
+        viewer.CloseRequested += pdf => _ = ClosePdfAsync(pdf);
+        viewer.StateChanged += _ => UpdateWindowState();
+
+        _pdfViewers.Add(viewer);
+        _tabControl.Items.Add(viewer.TabItem);
+        _tabControl.SelectedItem = viewer.TabItem;
+        return true;
+    }
+
+    /// <summary>Ferme un onglet PDF (en proposant d'enregistrer les modifications).</summary>
+    private async Task<bool> ClosePdfAsync(PdfViewer viewer)
+    {
+        if (viewer.IsModified)
+        {
+            MessageBoxResult answer = MessageBox.Show(
+                this,
+                $"Enregistrer les modifications de « {Path.GetFileName(viewer.FilePath)} » ?",
+                "KEYCE KODER",
+                MessageBoxButton.YesNoCancel,
+                MessageBoxImage.Question);
+
+            if (answer == MessageBoxResult.Cancel)
+                return false;
+
+            if (answer == MessageBoxResult.Yes && !await viewer.SaveAsync())
+                return false;
+        }
+
+        _pdfViewers.Remove(viewer);
+        _tabControl.Items.Remove(viewer.TabItem);
+        viewer.Cleanup();
+        UpdateWindowState();
+        return true;
+    }
+
+    /// <summary>Fermeture de l'application : chaque PDF modifié propose d'être enregistré.</summary>
+    private async Task<bool> ConfirmClosePdfsAsync()
+    {
+        foreach (PdfViewer viewer in _pdfViewers.Where(v => v.IsModified).ToList())
+        {
+            _tabControl.SelectedItem = viewer.TabItem;
+
+            if (!await ClosePdfAsync(viewer))
+                return false;
+        }
+
+        return true;
+    }
+
     private void UpdateWindowState()
     {
+        // Onglet PDF : titre de la fenêtre = nom du PDF
+        if (ActivePdf is PdfViewer pdf)
+        {
+            Title = $"{(pdf.IsModified ? "● " : "")}{Path.GetFileName(pdf.FilePath)} — KEYCE KODER";
+            _statusBar.Update(null);
+            return;
+        }
+
         EditorTab? tab = _tabManager.ActiveTab;
 
         Title = tab is null
@@ -461,6 +569,9 @@ public class MainWindow : Window
             // On bloque la fermeture le temps de demander « Enregistrer ? »
             e.Cancel = true;
 
+            if (!await ConfirmClosePdfsAsync())
+                return; // l'utilisateur a annulé
+
             if (!await _fileActions.ConfirmCloseAllAsync())
                 return; // l'utilisateur a annulé : on reste ouvert
 
@@ -480,5 +591,8 @@ public class MainWindow : Window
         // Fermeture confirmée : plus aucun processus Python ou shell orphelin
         _runner.Stop();
         _terminal.Dispose();
+
+        foreach (PdfViewer viewer in _pdfViewers)
+            viewer.Cleanup();
     }
 }

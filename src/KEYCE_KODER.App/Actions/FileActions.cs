@@ -27,6 +27,12 @@ public sealed class FileActions : IFileActions
         _tabs.CloseRequested += async (_, tab) => await CloseTabAsync(tab);
     }
 
+    /// <summary>
+    /// Ouverture spéciale (ex. lecteur PDF) : si elle renvoie true, le fichier a été pris en charge
+    /// et il n'est pas ouvert comme du texte dans l'éditeur.
+    /// </summary>
+    public Func<string, Task<bool>>? OpenSpecialFileAsync { get; set; }
+
     public bool HasActiveDocument => _tabs.ActiveTab != null;
 
     public bool HasUnsavedDocuments => _tabs.Tabs.Any(t => t.Document.IsDirty);
@@ -51,6 +57,10 @@ public sealed class FileActions : IFileActions
 
     public async Task OpenPathAsync(string filePath)
     {
+        // PDF (et autres formats spéciaux) : ouverts dans leur propre lecteur
+        if (OpenSpecialFileAsync is not null && await OpenSpecialFileAsync(filePath))
+            return;
+
         EditorTab? existing = _tabs.FindByPath(filePath);
 
         if (existing != null)
