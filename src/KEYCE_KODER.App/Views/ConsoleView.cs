@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
@@ -17,7 +17,22 @@ public sealed class ConsoleView : RichTextBox
 
     private static readonly Brush StdOutBrush = Frozen(218, 222, 232);
     private static readonly Brush StdErrBrush = Theme.Red;
+    private static readonly Brush WarningBrush = Frozen(226, 192, 141);
     private static readonly Brush InfoBrush = Theme.Muted;
+
+    // Beaucoup d'outils (git, pip, dotnet...) écrivent des messages NORMAUX sur la sortie d'erreur
+    // (« Switched to branch », « To https://github.com/... », progression...).
+    // On ne met en rouge que ce qui ressemble vraiment à une erreur.
+    private static readonly Regex ErrorPattern = new(
+        @"\b(error|erreur|fatal|exception|traceback|failed|échec|echec|denied|refusé|rejected|not found|introuvable|" +
+        @"cannot|impossible|invalid|invalide|n'est pas reconnu|is not recognized|unable|syntaxerror|abort)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    private static readonly Regex WarningPattern = new(
+        @"^\s*(warning|avertissement|attention|hint|astuce|deprecat)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.CultureInvariant);
+
+    private bool _lastErrorWasRed; // une erreur sur plusieurs blocs (ex. Traceback Python) reste rouge
 
     private readonly Paragraph _paragraph = new() { Margin = new Thickness(0) };
     private readonly Queue<(Run Run, int Lines)> _chunks = new();
@@ -85,11 +100,14 @@ public sealed class ConsoleView : RichTextBox
         {
             Foreground = kind switch
             {
-                OutputKind.StdErr => StdErrBrush,
+                OutputKind.StdErr => ErrorOutputBrush(text),
                 OutputKind.Info => InfoBrush,
                 _ => StdOutBrush,
             },
         };
+
+        if (kind != OutputKind.StdErr)
+            _lastErrorWasRed = false;
         _paragraph.Inlines.Add(run);
         _chunks.Enqueue((run, lines));
         _totalLines += lines;
@@ -100,6 +118,18 @@ public sealed class ConsoleView : RichTextBox
             _paragraph.Inlines.Remove(old.Run);
             _totalLines -= old.Lines;
         }
+    }
+
+    /// <summary>Couleur d'un bloc écrit sur la sortie d'erreur : rouge, orange (avertissement) ou normal.</summary>
+    private Brush ErrorOutputBrush(string text)
+    {
+        if (ErrorPattern.IsMatch(text) || _lastErrorWasRed)
+        {
+            _lastErrorWasRed = true;
+            return StdErrBrush;
+        }
+
+        return WarningPattern.IsMatch(text) ? WarningBrush : StdOutBrush;
     }
 
     private static string Clean(string s)

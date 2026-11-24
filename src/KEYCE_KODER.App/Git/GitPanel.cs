@@ -30,6 +30,7 @@ public sealed class GitPanel : DockPanel
 
     private static readonly Brush ModifiedBrush = Frozen(226, 192, 141);
     private static readonly Brush RenamedBrush = Frozen(110, 170, 255);
+    private static readonly Brush WarningBrush = Frozen(226, 192, 141);
 
     // Bouton plat : survol = léger voile blanc, désactivé = transparent
     private static readonly ControlTemplate FlatTemplate = (ControlTemplate)XamlReader.Parse(
@@ -831,7 +832,7 @@ public sealed class GitPanel : DockPanel
         if (File.Exists(fullPath))
             FileOpenRequested?.Invoke(fullPath);
         else
-            ShowInfo($"Fichier introuvable : {change.Path}", error: true);
+            ShowInfo($"⚠ Fichier introuvable : {change.Path}", InfoKind.Warning);
     }
 
     private static IEnumerable<string> PathsOf(GitFileChange change) =>
@@ -854,19 +855,19 @@ public sealed class GitPanel : DockPanel
 
         if (status.HasConflicts)
         {
-            ShowInfo("Résolvez d'abord les conflits, puis marquez chaque fichier comme résolu avec +.", error: true);
+            ShowInfo("⚠ Résolvez d'abord les conflits, puis marquez chaque fichier comme résolu avec +.", InfoKind.Warning);
             return;
         }
 
         if (status.IsClean)
         {
-            ShowInfo("Rien à valider : aucune modification.", error: false);
+            ShowInfo("Rien à valider : aucune modification.");
             return;
         }
 
         if (message.Length == 0)
         {
-            ShowInfo("Écrivez d'abord un message qui décrit vos modifications (ex. « Ajout du menu Fichier »).", error: true);
+            ShowInfo("⚠ Écrivez d'abord un message qui décrit vos modifications (ex. « Ajout du menu Fichier »).", InfoKind.Warning);
             _message.Focus();
             return;
         }
@@ -927,14 +928,15 @@ public sealed class GitPanel : DockPanel
 
         if (values[0].Length == 0 || !values[1].Contains('@'))
         {
-            ShowInfo("Nom ou e-mail invalide : le commit n'a pas été fait.", error: true);
+            ShowInfo("⚠ Nom ou e-mail invalide : le commit n'a pas été fait.", InfoKind.Warning);
             return false;
         }
 
         GitResult result = await _git.SetIdentityAsync(root, values[0], values[1]);
         if (!result.Success)
         {
-            ShowInfo("❌ " + Shorten(result.Message), error: true);
+            (string text, InfoKind kind) = DescribeFailure(result);
+            ShowInfo(text, kind, fullText: result.Message);
             return false;
         }
 
@@ -952,7 +954,7 @@ public sealed class GitPanel : DockPanel
 
         if (_status.Upstream is null)
         {
-            ShowInfo("Cette branche n'est pas encore liée à GitHub : faites d'abord « Push ».", error: false);
+            ShowInfo("Cette branche n'est pas encore liée à GitHub : faites d'abord « Push ».");
             return;
         }
 
@@ -971,13 +973,13 @@ public sealed class GitPanel : DockPanel
 
         if (status.IsDetached)
         {
-            ShowInfo("Impossible de pousser : aucune branche active (HEAD détaché).", error: true);
+            ShowInfo("⚠ Impossible de pousser : aucune branche active (HEAD détaché).", InfoKind.Warning);
             return;
         }
 
         if (!status.HasCommits)
         {
-            ShowInfo("Faites d'abord un commit avant de pousser.", error: true);
+            ShowInfo("⚠ Faites d'abord un commit avant de pousser.", InfoKind.Warning);
             return;
         }
 
@@ -1022,7 +1024,8 @@ public sealed class GitPanel : DockPanel
         GitResult result = await _git.AddRemoteAsync(root, "origin", values[0]);
         if (!result.Success)
         {
-            ShowInfo("❌ " + Shorten(result.Message), error: true);
+            (string text, InfoKind kind) = DescribeFailure(result);
+            ShowInfo(text, kind, fullText: result.Message);
             return null;
         }
 
@@ -1075,7 +1078,7 @@ public sealed class GitPanel : DockPanel
     private Task SwitchAsync(string root, string branch, bool remote)
     {
         if (_status is not null && !_status.IsClean)
-            ShowInfo("Attention : vos modifications non validées suivent la branche (ou bloquent le changement).", error: false);
+            ShowInfo("Attention : vos modifications non validées suivent la branche (ou bloquent le changement).");
 
         return ExecuteAsync(
             $"Passage sur {branch}…",
@@ -1099,7 +1102,7 @@ public sealed class GitPanel : DockPanel
         string name = values[0].Replace(' ', '-');
         if (name.Length == 0 || name.EndsWith('/'))
         {
-            ShowInfo("Nom de branche invalide.", error: true);
+            ShowInfo("⚠ Nom de branche invalide.", InfoKind.Warning);
             return;
         }
 
@@ -1140,7 +1143,7 @@ public sealed class GitPanel : DockPanel
 
         if (Directory.Exists(destination) && Directory.EnumerateFileSystemEntries(destination).Any())
         {
-            ShowInfo($"Le dossier « {destination} » existe déjà et n'est pas vide.", error: true);
+            ShowInfo($"⚠ Le dossier « {destination} » existe déjà et n'est pas vide.", InfoKind.Warning);
             return;
         }
 
@@ -1159,13 +1162,13 @@ public sealed class GitPanel : DockPanel
             return;
 
         SetBusy(true);
-        ShowInfo("Installation de Git avec winget… Acceptez la demande d'autorisation de Windows si elle apparaît.", error: false);
+        ShowInfo("Installation de Git avec winget… Acceptez la demande d'autorisation de Windows si elle apparaît.");
 
         try
         {
             int exitCode = await new ToolInstaller().InstallAsync(
                 GitInstall,
-                line => Dispatcher.BeginInvoke(new Action(() => ShowInfo(line, error: false))));
+                line => Dispatcher.BeginInvoke(new Action(() => ShowInfo(line))));
 
             // Git vient d'être installé : on relit le PATH (pas besoin de redémarrer)
             EnvironmentPath.Refresh();
@@ -1182,11 +1185,11 @@ public sealed class GitPanel : DockPanel
             ShowInfo(_gitFound
                     ? "✅ Git est installé."
                     : $"⚠ Git n'est pas encore détecté (code {exitCode}). Redémarrez KEYCE KODER.",
-                error: !_gitFound);
+                _gitFound ? InfoKind.Success : InfoKind.Warning);
         }
         catch (Exception ex)
         {
-            ShowInfo("❌ Installation impossible : " + ex.Message, error: true);
+            ShowInfo("❌ Installation impossible : " + ex.Message, InfoKind.Error);
         }
         finally
         {
@@ -1230,7 +1233,7 @@ public sealed class GitPanel : DockPanel
             return false;
 
         SetBusy(true);
-        ShowInfo(runningText, error: false);
+        ShowInfo(runningText);
 
         GitResult result;
 
@@ -1254,9 +1257,14 @@ public sealed class GitPanel : DockPanel
         await RefreshAsync();
 
         if (result.Success)
-            ShowInfo(successText ?? string.Empty, error: false);
+        {
+            ShowInfo(successText ?? string.Empty, InfoKind.Success);
+        }
         else
-            ShowInfo("❌ " + Shorten(result.Message), error: true, fullText: result.Message);
+        {
+            (string text, InfoKind kind) = DescribeFailure(result);
+            ShowInfo(text, kind, fullText: result.Message);
+        }
 
         return result.Success;
     }
@@ -1269,12 +1277,73 @@ public sealed class GitPanel : DockPanel
         Cursor = busy ? Cursors.Wait : null;
     }
 
-    private void ShowInfo(string text, bool error, string? fullText = null)
+    /// <summary>Type de message : seules les vraies erreurs sont en rouge.</summary>
+    private enum InfoKind
+    {
+        Normal,   // gris : en cours, information
+        Success,  // vert : opération réussie
+        Warning,  // orange : action à faire de votre côté (pas une erreur)
+        Error     // rouge : l'opération a échoué
+    }
+
+    private void ShowInfo(string text, InfoKind kind = InfoKind.Normal, string? fullText = null)
     {
         _info.Text = text;
-        _info.Foreground = error ? Theme.Red : Theme.Muted;
+        _info.Foreground = kind switch
+        {
+            InfoKind.Success => Theme.Green,
+            InfoKind.Warning => WarningBrush,
+            InfoKind.Error => Theme.Red,
+            _ => Theme.Muted
+        };
         _info.ToolTip = string.IsNullOrWhiteSpace(fullText) ? null : fullText;
         _info.Visibility = text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    /// <summary>
+    /// Traduit les échecs Git les plus courants en une explication claire.
+    /// Certains « échecs » ne sont pas des erreurs (ex. conflits à résoudre) : ils sont en orange.
+    /// </summary>
+    private static (string Text, InfoKind Kind) DescribeFailure(GitResult result)
+    {
+        string message = result.Message;
+        bool Has(string text) => message.Contains(text, StringComparison.OrdinalIgnoreCase);
+
+        if (Has("CONFLICT") || Has("Automatic merge failed"))
+            return ("⚠ Conflits de fusion : ouvrez les fichiers de la section CONFLITS, gardez la bonne version, "
+                    + "enregistrez, cliquez sur + puis « Valider ».", InfoKind.Warning);
+
+        if (Has("non-fast-forward") || Has("fetch first") || Has("[rejected]"))
+            return ("⚠ GitHub contient des commits que vous n'avez pas encore : faites d'abord « Pull », puis « Push ».",
+                    InfoKind.Warning);
+
+        if (Has("would be overwritten") || Has("Please commit your changes or stash them"))
+            return ("⚠ Vos modifications non validées bloquent l'opération : validez-les (commit) ou annulez-les d'abord.",
+                    InfoKind.Warning);
+
+        if (Has("nothing to commit"))
+            return ("Rien à valider : aucune modification.", InfoKind.Normal);
+
+        if (Has("Already up to date") || Has("Everything up-to-date"))
+            return ("Déjà à jour.", InfoKind.Success);
+
+        if (Has("already exists"))
+            return ("❌ Ce nom existe déjà (branche ou dossier).", InfoKind.Error);
+
+        if (Has("Authentication failed") || Has("could not read Username") || Has("terminal prompts disabled"))
+            return ("❌ Connexion à GitHub refusée : vérifiez votre compte (une fenêtre de connexion doit s'ouvrir).",
+                    InfoKind.Error);
+
+        if (Has("Permission denied") || Has("403"))
+            return ("❌ Accès refusé : votre compte n'a pas le droit d'écrire dans ce dépôt.", InfoKind.Error);
+
+        if (Has("Repository not found") || Has("does not appear to be a git repository"))
+            return ("❌ Dépôt introuvable : vérifiez l'adresse (et vos droits d'accès).", InfoKind.Error);
+
+        if (Has("Could not resolve host") || Has("unable to access"))
+            return ("❌ Impossible de joindre GitHub : vérifiez votre connexion Internet.", InfoKind.Error);
+
+        return ("❌ " + Shorten(message), InfoKind.Error);
     }
 
     /// <summary>Garde les dernières lignes d'un message Git (souvent long).</summary>

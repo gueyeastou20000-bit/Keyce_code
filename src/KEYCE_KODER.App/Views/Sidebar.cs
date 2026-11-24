@@ -19,6 +19,15 @@ public class Sidebar : Border
 
     private readonly ContentControl _content = new();
     private readonly Dictionary<string, UIElement> _views = new();
+    private readonly Dictionary<string, string> _titles = new()
+    {
+        ["explorer"] = "EXPLORATEUR",
+        ["search"] = "RECHERCHE",
+        ["git"] = "CONTRÔLE DE SOURCE",
+        ["home"] = "ACCUEIL",
+        ["settings"] = "PARAMÈTRES"
+    };
+    private string _currentView = "explorer";
 
     public ExplorerView Explorer { get; } = new();
     public SearchPanel Search { get; }
@@ -60,17 +69,24 @@ public class Sidebar : Border
         ShowView("explorer");
     }
 
+    /// <summary>Ajoute une vue créée ailleurs (ex. « debug » : Exécuter et déboguer).</summary>
+    public void AddView(string id, string title, UIElement view)
+    {
+        _views[id] = view;
+        _titles[id] = title;
+
+        if (_currentView == id)
+            ShowView(id);
+    }
+
     public void ShowView(string id)
     {
-        _title.Text = id switch
-        {
-            "explorer" => "EXPLORATEUR",
-            "search" => "RECHERCHE",
-            "git" => "CONTRÔLE DE SOURCE",
-            "home" => "ACCUEIL",
-            "settings" => "PARAMÈTRES",
-            _ => id.ToUpperInvariant()
-        };
+        _currentView = id;
+        Visibility = Visibility.Visible; // une vue demandée doit être visible (même après Ctrl+B)
+
+        _title.Text = _titles.TryGetValue(id, out var title)
+            ? title
+            : id.ToUpperInvariant();
 
         _content.Content = _views.TryGetValue(id, out var view)
             ? view

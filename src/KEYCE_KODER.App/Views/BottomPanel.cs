@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Markup;
@@ -11,7 +11,7 @@ using KEYCE_KODER.Terminal;
 
 namespace KEYCE_KODER.App.Views;
 
-/// <summary>Panneau inférieur : sortie d'exécution et terminal intégré.</summary>
+/// <summary>Panneau inférieur : sortie d'exécution, terminal intégré et console de débogage.</summary>
 public sealed class BottomPanel : Grid
 {
     private static readonly Brush PanelBg = Theme.Panel;
@@ -63,6 +63,12 @@ public sealed class BottomPanel : Grid
     private readonly TextBlock _status = new();
     private readonly Button _tabOutput = MakeButton("SORTIE");
     private readonly Button _tabTerminal = MakeButton("TERMINAL");
+    private readonly Button _tabDebug = MakeButton("CONSOLE DE DÉBOGAGE");
+
+    // Onglet CONSOLE DE DÉBOGAGE (contenu fourni par le débogueur)
+    private readonly Border _debugHost = new();
+
+    private enum PanelTab { Output, Terminal, Debug }
     private readonly Button _restart = MakeButton("↻ Redémarrer");
     private readonly Button _run = MakeButton("▶ Run", Green);
     private readonly Button _stop = MakeButton("■ Stop", Red);
@@ -89,11 +95,14 @@ public sealed class BottomPanel : Grid
 
         SetRow(_outputHost, 1);
         SetRow(_terminalHost, 1);
+        SetRow(_debugHost, 1);
         Children.Add(_outputHost);
         Children.Add(_terminalHost);
+        Children.Add(_debugHost);
 
-        _tabOutput.Click += (_, _) => ShowTab(terminal: false);
-        _tabTerminal.Click += (_, _) => ShowTab(terminal: true);
+        _tabOutput.Click += (_, _) => ShowTab(PanelTab.Output);
+        _tabTerminal.Click += (_, _) => ShowTab(PanelTab.Terminal);
+        _tabDebug.Click += (_, _) => ShowTab(PanelTab.Debug);
         _run.Click += (_, _) => RequestRun();
         _stop.Click += (_, _) => RequestStop();
 
@@ -113,7 +122,7 @@ public sealed class BottomPanel : Grid
         _terminal.OutputReceived += (_, lines) => _termView.Append(lines);
         _terminal.Exited += OnTerminalExited;
 
-        ShowTab(terminal: false);
+        ShowTab(PanelTab.Output);
         UpdateState();
     }
 
@@ -122,6 +131,14 @@ public sealed class BottomPanel : Grid
     public void RequestRun() => _ = RunAsync();
 
     public void RequestStop() => _runner.Stop();
+
+    // ───── Console de débogage ─────
+
+    /// <summary>Place la console de débogage dans l'onglet « CONSOLE DE DÉBOGAGE ».</summary>
+    public void SetDebugConsole(UIElement content) => _debugHost.Child = content;
+
+    /// <summary>Affiche l'onglet « CONSOLE DE DÉBOGAGE ».</summary>
+    public void ShowDebugConsole() => ShowTab(PanelTab.Debug);
 
     // ───── Exécution du programme ─────
 
@@ -132,7 +149,7 @@ public sealed class BottomPanel : Grid
         _run.IsEnabled = false; // évite le double clic pendant la sauvegarde
         try
         {
-            ShowTab(terminal: false);
+            ShowTab(PanelTab.Output);
             var path = await _prepareScript();
             if (path is null) return;
 
@@ -272,14 +289,18 @@ public sealed class BottomPanel : Grid
 
     // ───── Construction de l'interface ─────
 
-    private void ShowTab(bool terminal)
+    private void ShowTab(PanelTab tab)
     {
-        _outputHost.Visibility = terminal ? Visibility.Collapsed : Visibility.Visible;
+        bool terminal = tab == PanelTab.Terminal;
+
+        _outputHost.Visibility = tab == PanelTab.Output ? Visibility.Visible : Visibility.Collapsed;
         _terminalHost.Visibility = terminal ? Visibility.Visible : Visibility.Collapsed;
+        _debugHost.Visibility = tab == PanelTab.Debug ? Visibility.Visible : Visibility.Collapsed;
         _restart.Visibility = terminal ? Visibility.Visible : Visibility.Collapsed;
 
-        Select(_tabOutput, !terminal);
+        Select(_tabOutput, tab == PanelTab.Output);
         Select(_tabTerminal, terminal);
+        Select(_tabDebug, tab == PanelTab.Debug);
 
         if (terminal)
         {
@@ -302,11 +323,11 @@ public sealed class BottomPanel : Grid
         };
         header.MinHeight = 38;
 
-        for (var i = 0; i < 7; i++)
+        for (var i = 0; i < 8; i++)
         {
             header.ColumnDefinitions.Add(new ColumnDefinition
             {
-                Width = i == 2 ? new GridLength(1, GridUnitType.Star) : GridLength.Auto,
+                Width = i == 3 ? new GridLength(1, GridUnitType.Star) : GridLength.Auto,
             });
         }
 
@@ -317,10 +338,11 @@ public sealed class BottomPanel : Grid
 
         Place(header, _tabOutput, 0);
         Place(header, _tabTerminal, 1);
-        Place(header, _status, 3);
-        Place(header, _restart, 4);
-        Place(header, _run, 5);
-        Place(header, _stop, 6);
+        Place(header, _tabDebug, 2);
+        Place(header, _status, 4);
+        Place(header, _restart, 5);
+        Place(header, _run, 6);
+        Place(header, _stop, 7);
 
         SetRow(header, 0);
         Children.Add(header);
