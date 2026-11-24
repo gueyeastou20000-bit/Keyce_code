@@ -24,4 +24,8 @@
   <ItemGroup>
     <PackageReference Include="SharpVectors.Wpf" Version="1.8.6" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Tools\" />
+  </ItemGroup>
 </Project>

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
@@ -24,6 +24,7 @@ using KEYCE_KODER.App.Menus;
 using KEYCE_KODER.App.Status;
 using KEYCE_KODER.App.Tabs;
 using KEYCE_KODER.App.Search;
+using KEYCE_KODER.App.Tools;
 
 namespace KEYCE_KODER.App;
 
@@ -38,13 +39,14 @@ public class MainWindow : Window
     private readonly MainMenu _mainMenu;
     private readonly EditorStatusBar _statusBar;
     private FindReplaceWindow? _findReplaceWindow;
+    private ToolsWindow? _toolsWindow;
     private bool _closeConfirmed;
     private readonly DocumentManager _documentManager;
     private readonly FileService _fileService;
     private readonly DocumentService _documentService;
    
 
-    // Exécution : Runner Python + terminal intégré + panneau inférieur
+    // Exécution : Runner (Python, JavaScript, Java, C, C++) + terminal intégré + panneau inférieur
     private readonly ScriptRunner _runner;
     private readonly TerminalSession _terminal;
     private readonly BottomPanel _bottomPanel;
@@ -102,6 +104,12 @@ public class MainWindow : Window
             FindPrevious, () => _editActions.HasEditor));
         _mainMenu.EditMenu.Items.Add(_mainMenu.Item("Re_mplacer…", "Ctrl+H",
             () => ShowFind(replaceMode: true), () => _editActions.HasEditor));
+
+        // Menu Outils : installation des langages (Python, Node.js, JDK, GCC...)
+        var toolsMenu = new MenuItem { Header = "_Outils" };
+        toolsMenu.Items.Add(_mainMenu.Item("_Langages et outils…", "", () => _ = ShowToolsAsync()));
+        _mainMenu.Items.Add(toolsMenu);
+
         _statusBar = new EditorStatusBar();
 
         // Titre et barre d'état toujours à jour
@@ -273,7 +281,11 @@ public class MainWindow : Window
         Closing += OnWindowClosing;
     }
 
-    /// <summary>Enregistre le fichier actif si nécessaire et renvoie le chemin à exécuter.</summary>
+    /// <summary>
+    /// Prépare l'exécution du fichier actif : vérifie que le langage est pris en charge
+    /// et que son outil est installé, enregistre si besoin, puis renvoie le chemin à exécuter
+    /// (null = annuler l'exécution).
+    /// </summary>
     private async Task<string?> PrepareScriptAsync()
     {
         var tab = _tabManager.ActiveTab;
@@ -288,23 +300,18 @@ public class MainWindow : Window
         }
 
         var editorService = tab.EditorService;
-        var path = editorService.FilePath;
         var text = editorService.Text;
         var utf8 = new UTF8Encoding(false);
 
-        // Document sans fichier (démo ou nouveau) : copie temporaire
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            var dir = Path.Combine(Path.GetTempPath(), "KEYCE_KODER");
-            Directory.CreateDirectory(dir);
+        // Document jamais enregistré (démo ou nouveau) : exécuté comme du Python, via une copie temporaire
+        bool untitled = string.IsNullOrWhiteSpace(editorService.FilePath);
+        string path = untitled
+            ? Path.Combine(Path.GetTempPath(), "KEYCE_KODER", "main.py")
+            : editorService.FilePath!;
 
-            path = Path.Combine(dir, "main.py");
-            await File.WriteAllTextAsync(path, text, utf8);
-            return path;
-        }
-
-        // Le Runner sait-il exécuter ce type de fichier ? (Python, JavaScript, Java, C, C++...)
-        if (LanguageProfiles.ForFile(path) is null)
+        // 1. Le Runner sait-il exécuter ce type de fichier ? (Python, JavaScript, Java, C, C++...)
+        LanguageProfile? profile = LanguageProfiles.ForFile(path);
+        if (profile is null)
         {
             MessageBox.Show(
                 $"Run ne sait pas exécuter les fichiers « {Path.GetExtension(path)} ».\n\n" +
@@ -315,7 +322,19 @@ public class MainWindow : Window
             return null;
         }
 
-        // Sauvegarde avant exécution
+        // 2. L'outil nécessaire (python, node, java, gcc, g++) est-il installé ?
+        if (!await EnsureToolInstalledAsync(profile))
+            return null;
+
+        // 3. Copie temporaire pour un document sans fichier
+        if (untitled)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            await File.WriteAllTextAsync(path, text, utf8);
+            return path;
+        }
+
+        // 4. Sauvegarde avant exécution
         if (editorService.IsModified)
         {
             await File.WriteAllTextAsync(path, text, utf8);
@@ -325,6 +344,38 @@ public class MainWindow : Window
 
         return path;
     }
+
+    /// <summary>
+    /// Vérifie que l'outil du langage est installé. Sinon, propose de l'installer
+    /// et ouvre la fenêtre « Langages et outils ». Retourne true si on peut exécuter.
+    /// </summary>
+    private async Task<bool> EnsureToolInstalledAsync(LanguageProfile profile)
+    {
+        ResolvedTool? tool = await ToolLocator.LocateAsync(profile.Tool);
+        if (tool is not null)
+            return true;
+
+        MessageBoxResult answer = MessageBox.Show(
+            this,
+            $"{profile.Tool.DisplayName} est nécessaire pour exécuter du {profile.DisplayName}, "
+            + "mais il n'est pas installé sur ce PC.\n\nVoulez-vous l'installer maintenant ?",
+            "KEYCE KODER",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+
+        if (answer == MessageBoxResult.Yes)
+            await ShowToolsAsync(profile.Tool.Id);
+
+        return false;
+    }
+
+    /// <summary>Ouvre la fenêtre « Langages et outils » (créée à la première utilisation).</summary>
+    private async Task ShowToolsAsync(string? highlightToolId = null)
+    {
+        _toolsWindow ??= new ToolsWindow(this);
+        await _toolsWindow.ShowForAsync(highlightToolId);
+    }
+
     private void UpdateWindowState()
     {
         EditorTab? tab = _tabManager.ActiveTab;
@@ -379,6 +430,10 @@ public class MainWindow : Window
 
             if (_findReplaceWindow != null)
                 _findReplaceWindow.AllowClose = true;
+
+            if (_toolsWindow != null)
+                _toolsWindow.AllowClose = true;
+
             // Close() est interdit pendant l'événement Closing : on le reporte
             _ = Dispatcher.BeginInvoke(new Action(Close));
             return;
