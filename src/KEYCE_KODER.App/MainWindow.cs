@@ -241,7 +241,7 @@ public class MainWindow : Window
         grid.Children.Add(sidebar);
         grid.Children.Add(editorHost);
 
-        // Barre du haut, barre d'état en bas, le reste (explorateur, onglets, panneau) au centre
+        // Barre du haut, barre d'état en bas, le reste au centre
         var root = new DockPanel();
 
         // ---------- Menus supplémentaires (en plus de Fichier et Édition) ----------
@@ -263,6 +263,7 @@ public class MainWindow : Window
         viewMenu.Items.Add(Item("Recherche", () => sidebar.ShowView("search")));
         viewMenu.Items.Add(new Separator());
         viewMenu.Items.Add(Item("Afficher / masquer la barre latérale", sidebar.Toggle, "Ctrl+B"));
+        viewMenu.Items.Add(Item("Afficher / masquer le panneau du bas", _bottomPanel.TogglePanel));
 
         // Accéder
         var goMenu = new MenuItem { Header = "Accéder" };
@@ -278,7 +279,7 @@ public class MainWindow : Window
         // Terminal
         var terminalMenu = new MenuItem { Header = "Terminal" };
         terminalMenu.Items.Add(Item("Nouveau terminal", _bottomPanel.NewTerminal));
-terminalMenu.Items.Add(Item("Afficher / masquer le panneau", _bottomPanel.TogglePanel));
+        terminalMenu.Items.Add(Item("Afficher / masquer le panneau", _bottomPanel.TogglePanel));
         terminalMenu.Items.Add(new Separator());
         terminalMenu.Items.Add(Item("Exécuter le fichier actif", _bottomPanel.RequestRun));
         terminalMenu.Items.Add(Item("Arrêter l'exécution", _bottomPanel.RequestStop));
@@ -289,14 +290,18 @@ terminalMenu.Items.Add(Item("Afficher / masquer le panneau", _bottomPanel.Toggle
             "KEYCE KODER : éditeur de code développé par le groupe.",
             "À propos", MessageBoxButton.OK, MessageBoxImage.Information)));
 
-        // Ordre : Fichier, Édition, Sélection, Affichage, Accéder, Exécuter, Terminal, Aide
+        // Boutons visibles : Fichier, Édition, Sélection, Affichage, Accéder, Exécuter
         var menus = _mainMenu.Items.OfType<MenuItem>().ToList();
         menus.Add(selectMenu);
         menus.Add(viewMenu);
         menus.Add(goMenu);
         menus.Add(runMenu);
-        menus.Add(terminalMenu);
-        menus.Add(helpMenu);
+
+        // Bouton ⋯ : le reste (Terminal, Aide), avec sous-menus. On peut en ajouter d'autres ici.
+        var moreMenu = new MenuItem { Header = "⋯" };
+        moreMenu.Items.Add(terminalMenu);
+        moreMenu.Items.Add(helpMenu);
+        menus.Add(moreMenu);
 
         // L'ancien menu blanc est caché, la barre du haut le remplace
         _mainMenu.Visibility = Visibility.Collapsed;

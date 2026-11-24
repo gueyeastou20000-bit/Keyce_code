@@ -13,9 +13,12 @@ public class TopBar : Border
 {
     private readonly Action _onSearch;
     private readonly Popup _popup = new();
+    private readonly Popup _subPopup = new();
     private readonly StackPanel _panel = new();
+    private readonly StackPanel _subPanel = new();
     private readonly List<(Border Button, MenuItem Menu)> _buttons = new();
     private MenuItem? _openMenu;
+    private MenuItem? _openSub;
     private Window? _window;
 
     public TopBar(IReadOnlyList<MenuItem> source, Action onSearch)
@@ -37,15 +40,21 @@ public class TopBar : Border
             menuStrip.Children.Add(button);
         }
 
+        // Menus (taille du contenu) | recherche (le reste) | icônes
         var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(340) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         Grid.SetColumn(menuStrip, 0);
         grid.Children.Add(menuStrip);
 
         UIElement search = BuildSearchBox();
+        if (search is FrameworkElement sf)
+        {
+            sf.MaxWidth = 520;
+            sf.Margin = new Thickness(12, 0, 12, 0);
+        }
         Grid.SetColumn(search, 1);
         grid.Children.Add(search);
 
@@ -63,10 +72,16 @@ public class TopBar : Border
 
         Child = grid;
 
-        _popup.StaysOpen = true;
-        _popup.AllowsTransparency = true;
-        _popup.Placement = PlacementMode.Bottom;
-        _popup.Child = new Border
+        SetupPopup(_popup, _panel, PlacementMode.Bottom, 240);
+        SetupPopup(_subPopup, _subPanel, PlacementMode.Right, 240);
+    }
+
+    private static void SetupPopup(Popup popup, Panel content, PlacementMode placement, double minWidth)
+    {
+        popup.StaysOpen = true;
+        popup.AllowsTransparency = true;
+        popup.Placement = placement;
+        popup.Child = new Border
         {
             Background = Theme.Surface,
             BorderBrush = Theme.Border,
@@ -74,8 +89,8 @@ public class TopBar : Border
             CornerRadius = new CornerRadius(8),
             Padding = new Thickness(4),
             Margin = new Thickness(6),
-            MinWidth = 260,
-            Child = _panel,
+            MinWidth = minWidth,
+            Child = content,
             Effect = new System.Windows.Media.Effects.DropShadowEffect
             {
                 BlurRadius = 12, ShadowDepth = 2, Opacity = 0.5
@@ -97,17 +112,20 @@ public class TopBar : Border
 
     private Border MakeMenuButton(MenuItem top)
     {
+        string title = Clean(top.Header);
+        bool isMore = title == "⋯";
+
         var label = new TextBlock
         {
-            Text = Clean(top.Header),
+            Text = title,
             Foreground = Theme.Text,
-            FontSize = 13,
+            FontSize = isMore ? 16 : 12,
             VerticalAlignment = VerticalAlignment.Center
         };
 
         var button = new Border
         {
-            Padding = new Thickness(11, 6, 11, 6),
+            Padding = new Thickness(8, 6, 8, 6),
             CornerRadius = new CornerRadius(6),
             Background = Brushes.Transparent,
             Cursor = Cursors.Hand,
@@ -136,6 +154,8 @@ public class TopBar : Border
     {
         if (ReferenceEquals(_openMenu, top) && _popup.IsOpen) return;
 
+        CloseSub();
+
         // Laisse le code existant mettre à jour les éléments activés / désactivés
         top.RaiseEvent(new RoutedEventArgs(MenuItem.SubmenuOpenedEvent));
 
@@ -143,23 +163,7 @@ public class TopBar : Border
         button.Background = Theme.AccentSoft;
         _openMenu = top;
 
-        _panel.Children.Clear();
-        foreach (object child in top.Items)
-        {
-            if (child is Separator)
-            {
-                _panel.Children.Add(new Border
-                {
-                    Height = 1,
-                    Background = Theme.Border,
-                    Margin = new Thickness(6, 4, 6, 4)
-                });
-            }
-            else if (child is MenuItem mi)
-            {
-                _panel.Children.Add(MakeItemRow(mi));
-            }
-        }
+        FillPanel(_panel, top, isMainLevel: true);
 
         _popup.IsOpen = false;
         _popup.PlacementTarget = button;
@@ -176,9 +180,50 @@ public class TopBar : Border
         }
     }
 
+    private void FillPanel(StackPanel target, MenuItem parent, bool isMainLevel)
+    {
+        target.Children.Clear();
+        foreach (object child in parent.Items)
+        {
+            if (child is Separator)
+            {
+                target.Children.Add(new Border
+                {
+                    Height = 1,
+                    Background = Theme.Border,
+                    Margin = new Thickness(6, 4, 6, 4)
+                });
+            }
+            else if (child is MenuItem mi)
+            {
+                target.Children.Add(MakeItemRow(mi, isMainLevel));
+            }
+        }
+    }
+
+    private void OpenSub(MenuItem parent, FrameworkElement row)
+    {
+        if (ReferenceEquals(_openSub, parent) && _subPopup.IsOpen) return;
+        _openSub = parent;
+
+        parent.RaiseEvent(new RoutedEventArgs(MenuItem.SubmenuOpenedEvent));
+        FillPanel(_subPanel, parent, isMainLevel: false);
+
+        _subPopup.IsOpen = false;
+        _subPopup.PlacementTarget = row;
+        _subPopup.IsOpen = _subPanel.Children.Count > 0;
+    }
+
+    private void CloseSub()
+    {
+        _subPopup.IsOpen = false;
+        _openSub = null;
+    }
+
     private void OnWindowMouseDown(object sender, MouseButtonEventArgs e)
     {
         if (_popup.Child is FrameworkElement c && c.IsMouseOver) return;
+        if (_subPopup.Child is FrameworkElement s && s.IsMouseOver) return;
         foreach (var (b, _) in _buttons) if (b.IsMouseOver) return;
         CloseAll();
     }
@@ -187,6 +232,7 @@ public class TopBar : Border
 
     private void CloseAll()
     {
+        CloseSub();
         _popup.IsOpen = false;
         _openMenu = null;
         foreach (var (b, _) in _buttons) b.Background = Brushes.Transparent;
@@ -201,21 +247,22 @@ public class TopBar : Border
     private static string Clean(object? header) =>
         (header?.ToString() ?? string.Empty).Replace("_", string.Empty);
 
-    private UIElement MakeItemRow(MenuItem mi)
+    private UIElement MakeItemRow(MenuItem mi, bool isMainLevel)
     {
         bool enabled = mi.IsEnabled;
+        bool hasChildren = mi.Items.Count > 0;
 
         var dock = new DockPanel { LastChildFill = false };
-        var gesture = new TextBlock
+        var right = new TextBlock
         {
-            Text = mi.InputGestureText ?? string.Empty,
+            Text = hasChildren ? "›" : (mi.InputGestureText ?? string.Empty),
             Foreground = Theme.Muted,
-            FontSize = 12,
+            FontSize = hasChildren ? 16 : 12,
             Margin = new Thickness(24, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Center
         };
-        DockPanel.SetDock(gesture, Dock.Right);
-        dock.Children.Add(gesture);
+        DockPanel.SetDock(right, Dock.Right);
+        dock.Children.Add(right);
         dock.Children.Add(new TextBlock
         {
             Text = Clean(mi.Header),
@@ -233,10 +280,25 @@ public class TopBar : Border
             Child = dock
         };
 
-        if (enabled)
+        if (!enabled) return row;
+
+        row.MouseEnter += (_, _) =>
         {
-            row.MouseEnter += (_, _) => row.Background = Theme.SurfaceHover;
-            row.MouseLeave += (_, _) => row.Background = Brushes.Transparent;
+            row.Background = Theme.SurfaceHover;
+            if (isMainLevel)
+            {
+                if (hasChildren) OpenSub(mi, row);
+                else CloseSub();
+            }
+        };
+        row.MouseLeave += (_, _) => row.Background = Brushes.Transparent;
+
+        if (hasChildren)
+        {
+            row.MouseLeftButtonUp += (_, _) => OpenSub(mi, row);
+        }
+        else
+        {
             row.MouseLeftButtonUp += (_, _) =>
             {
                 CloseAll();
