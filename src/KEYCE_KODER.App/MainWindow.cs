@@ -303,10 +303,12 @@ public class MainWindow : Window
             return path;
         }
 
-        if (!string.Equals(Path.GetExtension(path), ".py", StringComparison.OrdinalIgnoreCase))
+        // Le Runner sait-il exécuter ce type de fichier ? (Python, JavaScript, Java, C, C++...)
+        if (LanguageProfiles.ForFile(path) is null)
         {
             MessageBox.Show(
-                "Run n'exécute que les fichiers Python (.py).",
+                $"Run ne sait pas exécuter les fichiers « {Path.GetExtension(path)} ».\n\n" +
+                $"Langages pris en charge : {string.Join(" ", LanguageProfiles.SupportedExtensions)}",
                 "KEYCE KODER",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
