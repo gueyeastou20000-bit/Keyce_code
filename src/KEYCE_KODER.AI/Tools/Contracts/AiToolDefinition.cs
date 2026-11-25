@@ -3,5 +3,6 @@
 public sealed record AiToolDefinition(
     string Name,
     string Description,
-    bool RequiresConfirmation
+    bool RequiresConfirmation,
+    object Parameters
 );

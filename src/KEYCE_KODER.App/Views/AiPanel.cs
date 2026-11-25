@@ -728,7 +728,8 @@ public sealed class AiPanel : Border
         bool isError = false,
         bool isTruncated = false,
         string? warningMessage = null,
-        bool allowRetry = false)
+        bool allowRetry = false,
+        string? proposalId = null)
     {
         var card = new Border
         {
@@ -908,7 +909,7 @@ public sealed class AiPanel : Border
                 Cursor = Cursors.Hand,
                 Margin = new Thickness(0, 0, 8, 0)
             };
-            acceptBtn.Click += (_, _) => ProposalAccepted?.Invoke(proposalAction);
+            acceptBtn.Click += (_, _) => ProposalAccepted?.Invoke(proposalId ?? proposalAction);
 
             var rejectBtn = new Button
             {
@@ -920,7 +921,7 @@ public sealed class AiPanel : Border
                 BorderThickness = new Thickness(0),
                 Cursor = Cursors.Hand
             };
-            rejectBtn.Click += (_, _) => ProposalRejected?.Invoke(proposalAction);
+            rejectBtn.Click += (_, _) => ProposalRejected?.Invoke(proposalId ?? proposalAction);
 
             btnRow.Children.Add(acceptBtn);
             btnRow.Children.Add(rejectBtn);

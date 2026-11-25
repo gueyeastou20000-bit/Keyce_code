@@ -12,9 +12,13 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Text.Json;
 using System.Windows.Threading;
 
 using KEYCE_KODER.AI;
+using KEYCE_KODER.AI.Tools.Contracts;
+using KEYCE_KODER.AI.Tools.Execution;
+using KEYCE_KODER.AI.Tools.FileSystem;
 using KEYCE_KODER.App.Actions;
 using KEYCE_KODER.App.Commands;
 using KEYCE_KODER.App.Debugging;
@@ -69,14 +73,21 @@ public class MainWindow : Window
     private readonly AiPanel _aiPanel;
     private readonly OllamaChatClient _ollamaClient = new();
     private readonly List<AiChatMessage> _aiHistory = new();
+    private readonly AiToolRegistry _aiToolRegistry;
+    private readonly AiToolExecutor _aiToolExecutor;
+
+    private readonly Dictionary<string, TaskCompletionSource<bool>>
+        _pendingAiConfirmations = new();
+
+    private Func<string?>? _getProjectRoot;
     private CancellationTokenSource? _aiCts;
     private (string Msg, AiMode Mode, string Model, bool Thinking, IReadOnlyList<string> Atts)? _lastAiSubmission;
 
     private const string AiSystemPrompt =
         "Tu es KEYCE KODER, un assistant intégré à un environnement de développement logiciel. " +
         "Tu réponds en français par défaut, tu expliques clairement et tu proposes du code fiable. " +
-        "En mode Ask, tu analyses et conseilles sans prétendre modifier les fichiers ni exécuter des actions. " +
-        "Tu ne prétends jamais avoir accès au projet si son contenu ne t'a pas été transmis.";
+        "Tu ne prétends jamais avoir accès au projet si son contenu ne t'a pas été transmis. " +
+        "Tu ne prétends jamais avoir effectué une opération sans preuve de son exécution.";
     private readonly Border _aiHost;
     private readonly GridSplitter _aiSplitter;
     private readonly ColumnDefinition _aiCol = new() { Width = GridLength.Auto };
@@ -200,6 +211,21 @@ public class MainWindow : Window
         // Création des panneaux de navigation (ActivityBar 44px, Sidebar 220px)
         var activityBar = new ActivityBar();
         var sidebar = new Sidebar();
+        // Dossier racine utilisé par les outils de l'Agent.
+        _getProjectRoot = () => sidebar.Explorer.CurrentFolder;
+
+        // Registre des outils autorisés.
+        _aiToolRegistry = new AiToolRegistry();
+
+        _aiToolRegistry.Register(new CreateFileTool());
+        _aiToolRegistry.Register(new ReadFileTool());
+        _aiToolRegistry.Register(new UpdateFileTool());
+        _aiToolRegistry.Register(new DeleteFileTool());
+
+        // Moteur d'exécution avec confirmation utilisateur obligatoire.
+        _aiToolExecutor = new AiToolExecutor(
+            _aiToolRegistry,
+            ConfirmAiToolAsync);
 
         _bottomPanel = new BottomPanel(
             _runner,
@@ -352,6 +378,15 @@ public class MainWindow : Window
         // Panneau IA latéral droit rétractable
         _aiPanel = new AiPanel();
         _aiPanel.CloseRequested += () => SetAiPanelVisible(false);
+        _aiPanel.ProposalAccepted += actionId =>
+        {
+            ResolveAiConfirmation(actionId, true);
+        };
+
+        _aiPanel.ProposalRejected += actionId =>
+        {
+            ResolveAiConfirmation(actionId, false);
+        };
 
         _aiPanel.StopRequested += () =>
         {
@@ -627,17 +662,108 @@ public class MainWindow : Window
         SetAiPanelVisible(_aiHost.Visibility != Visibility.Visible);
     }
 
-    private async Task ExecuteAiRequestAsync(string msg, AiMode mode, string model, bool thinking, IReadOnlyList<string> atts)
+    private async Task<bool> ConfirmAiToolAsync(
+    AiToolDefinition definition,
+    AiToolRequest request,
+    CancellationToken cancellationToken)
     {
-        if (_aiCts != null) return;
+        cancellationToken.ThrowIfCancellationRequested();
+
+        string proposalId = Guid.NewGuid().ToString("N");
+
+        string formattedArguments = JsonSerializer.Serialize(
+            request.Arguments,
+            new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+
+        string proposalText =
+            $"Opération demandée : {definition.Name}\n\n" +
+            $"Description : {definition.Description}\n\n" +
+            $"Arguments exacts :\n{formattedArguments}";
+
+        var completion = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        _pendingAiConfirmations.Add(proposalId, completion);
+
+        try
+        {
+            _aiPanel.SetAssistantState(
+                AssistantVisualState.ExecutingAction,
+                "En attente de votre autorisation");
+
+            _aiPanel.AddAssistantMessage(
+                "L'Agent souhaite effectuer cette opération. " +
+                "Vérifiez les détails avant de choisir.",
+                proposalAction: proposalText,
+                proposalId: proposalId);
+
+            using var registration = cancellationToken.Register(
+                () => completion.TrySetCanceled(cancellationToken));
+
+            return await completion.Task;
+        }
+        finally
+        {
+            _pendingAiConfirmations.Remove(proposalId);
+        }
+    }
+
+    private void ResolveAiConfirmation(
+        string proposalId,
+        bool approved)
+    {
+        if (_pendingAiConfirmations.TryGetValue(
+            proposalId,
+            out var completion))
+        {
+            completion.TrySetResult(approved);
+        }
+    }
+
+    private async Task ExecuteAiRequestAsync(
+    string msg,
+    AiMode mode,
+    string model,
+    bool thinking,
+    IReadOnlyList<string> atts)
+    {
+        if (_aiCts != null)
+            return;
+
+        // L'Agent doit obligatoirement travailler dans un dossier de projet ouvert.
+        AiToolContext? toolContext = null;
 
         if (mode == AiMode.Agent)
         {
-            _aiPanel.AddAssistantMessage(
-                "Le moteur Agent n'est pas encore disponible. " +
-                "Votre demande n'a pas été exécutée. Vous pouvez repasser en mode Ask.");
-            _aiPanel.SetAssistantState(AssistantVisualState.Ready);
-            return;
+            string? projectRoot = _getProjectRoot?.Invoke();
+
+            if (string.IsNullOrWhiteSpace(projectRoot) ||
+                !Directory.Exists(projectRoot))
+            {
+                _aiPanel.AddAssistantMessage(
+                    "Ouvrez un dossier de projet dans KEYCE KODER avant d'utiliser le mode Agent.");
+
+                _aiPanel.SetAssistantState(AssistantVisualState.Ready);
+                return;
+            }
+
+            try
+            {
+                toolContext = new AiToolContext(projectRoot);
+            }
+            catch (Exception ex)
+            {
+                _aiPanel.AddAssistantMessage(
+                    "Impossible d'utiliser ce dossier comme racine du projet.\n\n" +
+                    ex.Message,
+                    isError: true);
+
+                _aiPanel.SetAssistantState(AssistantVisualState.Error);
+                return;
+            }
         }
 
         var currentCts = new CancellationTokenSource();
@@ -645,20 +771,53 @@ public class MainWindow : Window
         _aiPanel.SetGenerating(true);
 
         if (thinking)
-            _aiPanel.SetAssistantState(AssistantVisualState.Thinking, "Réflexion en cours");
+        {
+            _aiPanel.SetAssistantState(
+                AssistantVisualState.Thinking,
+                "Réflexion en cours");
+        }
         else
-            _aiPanel.SetAssistantState(AssistantVisualState.Generating, "Génération de réponse");
+        {
+            _aiPanel.SetAssistantState(
+                AssistantVisualState.Generating,
+                mode == AiMode.Agent
+                    ? "Agent en cours"
+                    : "Génération de réponse");
+        }
+
+        // Messages du tour courant : ils ne rejoignent l'historique
+        // qu'une fois la réponse finale obtenue.
+        var turnMessages = new List<AiChatMessage>();
+        bool hasExecutedTool = false;
+        bool turnCommitted = false;
 
         try
         {
-            var requestMessages = new List<AiChatMessage>();
-
+            // Historique commun entre Ask et Agent.
             if (_aiHistory.Count == 0)
-                requestMessages.Add(new AiChatMessage("system", AiSystemPrompt));
-            else
-                requestMessages.AddRange(_aiHistory);
+            {
+                _aiHistory.Add(
+                    new AiChatMessage("system", AiSystemPrompt));
+            }
+
+            var requestMessages = new List<AiChatMessage>(_aiHistory);
+
+            // Instruction temporaire : elle ne pollue pas l'historique partagé.
+            string modeInstruction = mode == AiMode.Agent
+                ? "MODE AGENT : tu peux utiliser uniquement les outils fournis par l'application. " +
+                  "Utilise les outils lorsque cela est nécessaire. " +
+                  "N'affirme jamais qu'un fichier a été créé, modifié, lu ou supprimé sans résultat positif de l'outil. " +
+                  "Les opérations sensibles nécessitent une confirmation de l'utilisateur gérée par l'application. " +
+                  "Si un outil échoue ou est refusé, tiens-en compte. " +
+                  "Après réception des résultats des outils, poursuis ton travail et donne une réponse finale claire."
+                : "MODE ASK : tu es en lecture seule. " +
+                  "Tu peux expliquer, analyser et conseiller, mais tu ne dois pas modifier de fichiers ni exécuter d'actions.";
+
+            requestMessages.Add(
+                new AiChatMessage("system", modeInstruction));
 
             var tab = _tabManager.ActiveTab;
+
             string docInfo = tab != null
                 ? $"Fichier actif dans l'IDE : {tab.Document.Name}"
                 : "Aucun fichier ouvert dans l'IDE.";
@@ -671,50 +830,218 @@ public class MainWindow : Window
                                "mais leur contenu n'a pas encore été transmis au modèle.";
             }
 
-            requestMessages.Add(new AiChatMessage("user", userContent));
+            // Le message utilisateur est ajouté aux deux listes :
+            // requestMessages pour le tour courant, turnMessages pour l'historique futur.
+            var userMessage = new AiChatMessage("user", userContent);
 
-            currentCts.Token.ThrowIfCancellationRequested();
+            requestMessages.Add(userMessage);
+            turnMessages.Add(userMessage);
 
-            var result = await _ollamaClient.SendChatAsync(
-                model,
-                requestMessages,
-                thinking,
-                AppSettings.Current.AiContextSize,
-                currentCts.Token);
+            // Les outils ne sont transmis au modèle qu'en mode Agent.
+            var toolDefinitions = mode == AiMode.Agent
+                ? _aiToolRegistry.GetAll()
+                    .Select(tool => tool.Definition)
+                    .ToArray()
+                : null;
 
-            currentCts.Token.ThrowIfCancellationRequested();
+            const int maxRounds = 5;
+            const int maxToolCalls = 10;
 
-            if (result.IsTruncated)
+            int totalToolCalls = 0;
+            bool toolLimitReached = false;
+
+            for (int round = 0; round < maxRounds; round++)
             {
-                // Limite de tokens atteinte (done_reason: length). Réponse incomplète.
-                _aiPanel.AddAssistantMessage(
+                currentCts.Token.ThrowIfCancellationRequested();
+
+                var result = await _ollamaClient.SendChatAsync(
+                    model,
+                    requestMessages,
+                    thinking,
+                    AppSettings.Current.AiContextSize,
+                    currentCts.Token,
+                    toolDefinitions);
+
+                currentCts.Token.ThrowIfCancellationRequested();
+
+                if (result.IsTruncated)
+                {
+                    // Correctif 2 : on ne perd pas la trace des opérations réelles.
+                    if (hasExecutedTool && !turnCommitted)
+                    {
+                        _aiHistory.AddRange(turnMessages);
+
+                        _aiHistory.Add(
+                            new AiChatMessage(
+                                "assistant",
+                                "La réponse a été tronquée après une ou plusieurs opérations."));
+
+                        turnCommitted = true;
+                    }
+
+                    _aiPanel.AddAssistantMessage(
+                        result.Content,
+                        isTruncated: true,
+                        warningMessage:
+                            "Réponse interrompue : la limite de tokens a été atteinte.",
+                        allowRetry: !hasExecutedTool);
+
+                    _aiPanel.SetAssistantState(AssistantVisualState.Ready);
+                    return;
+                }
+
+                // Aucun appel d'outil : la réponse est terminée.
+                if (!result.HasToolCalls)
+                {
+                    // On valide le tour : tous les messages intermédiaires
+                    // (user + assistant avec tool calls + tool résultats) entrent
+                    // dans l'historique, suivis de la réponse finale.
+                    _aiHistory.AddRange(turnMessages);
+                    _aiHistory.Add(
+                        new AiChatMessage("assistant", result.Content));
+
+                    turnCommitted = true;
+
+                    _aiPanel.AddAssistantMessage(result.Content);
+                    _aiPanel.SetAssistantState(AssistantVisualState.Ready);
+                    return;
+                }
+
+                if (mode != AiMode.Agent)
+                {
+                    _aiPanel.AddAssistantMessage(
+                        "Un appel d'outil a été demandé alors que le mode Ask est en lecture seule.",
+                        isError: true);
+
+                    _aiPanel.SetAssistantState(AssistantVisualState.Error);
+                    return;
+                }
+
+                // On conserve le message assistant qui contient les appels d'outils.
+                var assistantToolMessage = new AiChatMessage(
+                    "assistant",
                     result.Content,
-                    isTruncated: true,
-                    warningMessage: "Réponse interrompue : la limite de tokens a été atteinte (réponse incomplète).",
-                    allowRetry: true);
-                _aiPanel.SetAssistantState(AssistantVisualState.Ready);
-            }
-            else
-            {
-                if (_aiHistory.Count == 0)
-                    _aiHistory.Add(new AiChatMessage("system", AiSystemPrompt));
+                    result.ToolCalls);
 
-                _aiHistory.Add(new AiChatMessage("user", userContent));
-                _aiHistory.Add(new AiChatMessage("assistant", result.Content));
+                requestMessages.Add(assistantToolMessage);
+                turnMessages.Add(assistantToolMessage);
 
-                _aiPanel.AddAssistantMessage(result.Content);
-                _aiPanel.SetAssistantState(AssistantVisualState.Ready);
+                foreach (var toolCall in result.ToolCalls!)
+                {
+                    currentCts.Token.ThrowIfCancellationRequested();
+
+                    // Correctif 1 : chaque appel d'outil non exécuté reçoit
+                    // une réponse "tool" pour ne pas laisser la conversation
+                    // dans un état incomplet.
+                    if (totalToolCalls >= maxToolCalls)
+                    {
+                        toolLimitReached = true;
+
+                        string limitToolMessage =
+                            "[Échec : tool_limit_reached] Limite de sécurité atteinte. Cet outil n'a pas été exécuté.";
+
+                        var skippedToolMessage = new AiChatMessage(
+                            "tool",
+                            limitToolMessage);
+
+                        requestMessages.Add(skippedToolMessage);
+                        turnMessages.Add(skippedToolMessage);
+
+                        continue;
+                    }
+
+                    totalToolCalls++;
+
+                    var toolRequest = new AiToolRequest(
+                        toolCall.Name,
+                        toolCall.Arguments);
+
+                    _aiPanel.SetAssistantState(
+                        AssistantVisualState.ExecutingAction,
+                        $"Exécution de l'outil : {toolCall.Name}");
+
+                    AiToolResult toolResult = await _aiToolExecutor.ExecuteAsync(
+                        toolRequest,
+                        toolContext!,
+                        currentCts.Token);
+
+                    currentCts.Token.ThrowIfCancellationRequested();
+
+                    hasExecutedTool = true;
+
+                    string toolMessageContent = toolResult.Success
+                        ? $"[Succès] {toolResult.Message}"
+                        : $"[Échec : {toolResult.ErrorCode ?? "erreur"}] {toolResult.Message}";
+
+                    var toolMessage = new AiChatMessage("tool", toolMessageContent);
+
+                    requestMessages.Add(toolMessage);
+                    turnMessages.Add(toolMessage);
+                }
+
+                // Correctif 1 : si la limite a été atteinte, on sort de la boucle
+                // des tours. Le modèle a déjà une réponse "tool" pour chaque appel,
+                // mais on ne relance pas un tour supplémentaire.
+                if (toolLimitReached)
+                    break;
+
+                currentCts.Token.ThrowIfCancellationRequested();
+
+                _aiPanel.SetAssistantState(
+                    thinking
+                        ? AssistantVisualState.Thinking
+                        : AssistantVisualState.Generating,
+                    "Analyse des résultats des outils");
             }
+
+            // Le modèle a atteint le nombre maximal de tours.
+            const string limitMessage =
+                "La limite de sécurité de l'Agent a été atteinte. " +
+                "Les opérations déjà effectuées ne sont pas annulées. " +
+                "Vérifiez les résultats avant de poursuivre.";
+
+            _aiPanel.AddAssistantMessage(limitMessage);
+            _aiPanel.SetAssistantState(AssistantVisualState.Ready);
+
+            // On conserve le tour courant (sans l'instruction de mode, qui n'a
+            // jamais été ajoutée à turnMessages) pour ne pas perdre le contexte
+            // des opérations déjà effectuées.
+            _aiHistory.AddRange(turnMessages);
+            _aiHistory.Add(new AiChatMessage("assistant", limitMessage));
+
+            turnCommitted = true;
         }
         catch (OperationCanceledException)
         {
-            _aiPanel.SetAssistantState(AssistantVisualState.Interrupted, "Interrompu");
-            _aiPanel.AddAssistantMessage("Génération interrompue par l'utilisateur.");
+            // Correctif 2 : on conserve les opérations réellement effectuées
+            // avant l'interruption, pour ne pas perdre leur trace.
+            if (hasExecutedTool && !turnCommitted)
+            {
+                _aiHistory.AddRange(turnMessages);
+
+                _aiHistory.Add(
+                    new AiChatMessage(
+                        "assistant",
+                        "Le traitement a été interrompu après une ou plusieurs opérations."));
+
+                turnCommitted = true;
+            }
+
+            _aiPanel.SetAssistantState(
+                AssistantVisualState.Interrupted,
+                "Interrompu");
+
+            _aiPanel.AddAssistantMessage(
+                "Génération interrompue par l'utilisateur.");
+
             _aiPanel.RestorePrompt(msg);
         }
         catch (HttpRequestException ex)
         {
-            _aiPanel.SetAssistantState(AssistantVisualState.Error, "Erreur de connexion Ollama");
+            _aiPanel.SetAssistantState(
+                AssistantVisualState.Error,
+                "Erreur de connexion Ollama");
+
             _aiPanel.AddAssistantMessage(
                 "Impossible de contacter le serveur Ollama.\n\n" +
                 "Vérifiez qu'Ollama fonctionne et que le modèle spécifié est disponible.\n\n" +
@@ -724,7 +1051,10 @@ public class MainWindow : Window
         }
         catch (Exception ex)
         {
-            _aiPanel.SetAssistantState(AssistantVisualState.Error, "Erreur");
+            _aiPanel.SetAssistantState(
+                AssistantVisualState.Error,
+                "Erreur");
+
             _aiPanel.AddAssistantMessage(
                 "Impossible d'obtenir une réponse de l'assistant IA.\n\n" +
                 "Détail : " + ex.Message,
@@ -737,12 +1067,11 @@ public class MainWindow : Window
             {
                 _aiCts = null;
             }
-            currentCts.Dispose();
 
+            currentCts.Dispose();
             _aiPanel.SetGenerating(false);
         }
     }
-
     private void ShowWelcome()
     {
         _welcomeView.Visibility = Visibility.Visible;

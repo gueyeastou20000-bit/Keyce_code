@@ -7,6 +7,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using KEYCE_KODER.AI;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using System.Text.Json;
+using KEYCE_KODER.AI.Tools.Contracts;
 
 namespace KEYCE_KODER.Tests;
 
@@ -152,4 +154,141 @@ public class OllamaChatClientTests
             await client.SendAsync("qwen3.5:latest", emptyMessages);
         });
     }
+
+    [TestMethod]
+    public async Task SendChatAsync_WhenModelRequestsTool_ParsesToolCall()
+    {
+        var mockHandler = new MockHttpMessageHandler((req, ct) =>
+        {
+            var json = """
+        {
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "read_file",
+                            "arguments": {
+                                "path": "src/Program.cs"
+                            }
+                        }
+                    }
+                ]
+            },
+            "done": true
+        }
+        """;
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            });
+        });
+
+        using var httpClient = new HttpClient(mockHandler)
+        {
+            BaseAddress = new Uri("http://localhost:11434/")
+        };
+
+        using var client = new OllamaChatClient(httpClient);
+
+        var messages = new List<AiChatMessage>
+    {
+        new("user", "Lis le fichier Program.cs")
+    };
+
+        var result = await client.SendChatAsync("qwen3.5:latest", messages);
+
+        Assert.IsTrue(result.HasToolCalls);
+        Assert.AreEqual(1, result.ToolCalls!.Count);
+        Assert.AreEqual("read_file", result.ToolCalls[0].Name);
+
+        Assert.AreEqual(
+            "src/Program.cs",
+            result.ToolCalls[0].Arguments.GetProperty("path").GetString());
+    }
+
+    [TestMethod]
+    public async Task SendChatAsync_WithTools_SendsToolDefinitionsToOllama()
+    {
+        string? capturedRequest = null;
+
+        var mockHandler = new MockHttpMessageHandler(async (req, ct) =>
+        {
+            capturedRequest = await req.Content!.ReadAsStringAsync(ct);
+
+            var json = """
+        {
+            "message": {
+                "role": "assistant",
+                "content": "Je peux lire ce fichier."
+            },
+            "done": true
+        }
+        """;
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            };
+        });
+
+        using var httpClient = new HttpClient(mockHandler)
+        {
+            BaseAddress = new Uri("http://localhost:11434/")
+        };
+
+        using var client = new OllamaChatClient(httpClient);
+
+        var messages = new List<AiChatMessage>
+    {
+        new("user", "Lis mon fichier")
+    };
+
+        var tools = new List<AiToolDefinition>
+    {
+        new(
+            "read_file",
+            "Lit un fichier du projet.",
+            false,
+            new
+            {
+                type = "object",
+                required = new[] { "path" },
+                properties = new
+                {
+                    path = new
+                    {
+                        type = "string"
+                    }
+                }
+            })
+    };
+
+        await client.SendChatAsync(
+            "qwen3.5:latest",
+            messages,
+            tools: tools);
+
+        Assert.IsNotNull(capturedRequest);
+
+        using var document = JsonDocument.Parse(capturedRequest!);
+
+        var root = document.RootElement;
+
+        Assert.AreEqual(
+            "read_file",
+            root.GetProperty("tools")[0]
+                .GetProperty("function")
+                .GetProperty("name")
+                .GetString());
+
+        Assert.AreEqual(
+            4096,
+            root.GetProperty("options")
+                .GetProperty("num_ctx")
+                .GetInt32());
+    }
+
 }

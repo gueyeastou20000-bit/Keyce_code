@@ -1,4 +1,5 @@
-﻿using KEYCE_KODER.AI.Tools.Contracts;
+﻿
+using KEYCE_KODER.AI.Tools.Contracts;
 
 namespace KEYCE_KODER.AI.Tools.Execution;
 
@@ -6,13 +7,19 @@ public sealed class AiToolExecutor
 {
     private readonly AiToolRegistry _registry;
 
-    private readonly Func<AiToolDefinition, CancellationToken, Task<bool>>
-        _confirmationHandler;
+    private readonly Func<
+        AiToolDefinition,
+        AiToolRequest,
+        CancellationToken,
+        Task<bool>> _confirmationHandler;
 
     public AiToolExecutor(
         AiToolRegistry registry,
-        Func<AiToolDefinition, CancellationToken, Task<bool>>
-            confirmationHandler)
+        Func<
+            AiToolDefinition,
+            AiToolRequest,
+            CancellationToken,
+            Task<bool>> confirmationHandler)
     {
         _registry = registry ??
             throw new ArgumentNullException(nameof(registry));
@@ -40,11 +47,16 @@ public sealed class AiToolExecutor
 
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             if (tool.Definition.RequiresConfirmation)
             {
                 bool approved = await _confirmationHandler(
                     tool.Definition,
+                    request,
                     cancellationToken);
+
+                cancellationToken.ThrowIfCancellationRequested();
 
                 if (!approved)
                 {

@@ -1,4 +1,5 @@
-﻿using System;
+﻿
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
@@ -6,14 +7,30 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using KEYCE_KODER.AI.Tools.Contracts;
 
 namespace KEYCE_KODER.AI;
 
-public sealed record AiChatMessage(string Role, string Content);
+public sealed record AiChatToolCall(
+    string Name,
+    JsonElement Arguments
+);
 
-public sealed record AiChatResult(string Content, string? DoneReason = null)
+public sealed record AiChatMessage(
+    string Role,
+    string Content,
+    IReadOnlyList<AiChatToolCall>? ToolCalls = null
+);
+
+public sealed record AiChatResult(
+    string Content,
+    string? DoneReason = null,
+    IReadOnlyList<AiChatToolCall>? ToolCalls = null)
 {
-    public bool IsTruncated => string.Equals(DoneReason, "length", StringComparison.OrdinalIgnoreCase);
+    public bool IsTruncated =>
+        string.Equals(DoneReason, "length", StringComparison.OrdinalIgnoreCase);
+
+    public bool HasToolCalls => ToolCalls is { Count: > 0 };
 }
 
 public sealed class OllamaChatClient : IDisposable
@@ -39,9 +56,17 @@ public sealed class OllamaChatClient : IDisposable
         IReadOnlyList<AiChatMessage> messages,
         bool thinkingEnabled = false,
         int contextSize = 4096,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlyList<AiToolDefinition>? tools = null)
     {
-        var result = await SendChatAsync(model, messages, thinkingEnabled, contextSize, cancellationToken);
+        var result = await SendChatAsync(
+            model,
+            messages,
+            thinkingEnabled,
+            contextSize,
+            cancellationToken,
+            tools);
+
         return result.Content;
     }
 
@@ -50,7 +75,8 @@ public sealed class OllamaChatClient : IDisposable
         IReadOnlyList<AiChatMessage> messages,
         bool thinkingEnabled = false,
         int contextSize = 4096,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlyList<AiToolDefinition>? tools = null)
     {
         if (string.IsNullOrWhiteSpace(model))
             throw new ArgumentException("Le nom du modèle est obligatoire.", nameof(model));
@@ -61,22 +87,55 @@ public sealed class OllamaChatClient : IDisposable
         if (contextSize < 512 || contextSize > 262144)
             throw new ArgumentOutOfRangeException(nameof(contextSize));
 
-        var payload = new
+        var serializedMessages = messages.Select(message =>
         {
-            model,
-            messages = messages.Select(m => new
+            var item = new Dictionary<string, object?>
             {
-                role = m.Role,
-                content = m.Content
-            }),
-            stream = false,
-            think = thinkingEnabled,
-            options = new
+                ["role"] = message.Role,
+                ["content"] = message.Content
+            };
+
+            if (message.ToolCalls is { Count: > 0 })
+            {
+                item["tool_calls"] = message.ToolCalls.Select(call => new
+                {
+                    function = new
+                    {
+                        name = call.Name,
+                        arguments = call.Arguments
+                    }
+                }).ToArray();
+            }
+
+            return item;
+        }).ToArray();
+
+        var payload = new Dictionary<string, object?>
+        {
+            ["model"] = model,
+            ["messages"] = serializedMessages,
+            ["stream"] = false,
+            ["think"] = thinkingEnabled,
+            ["options"] = new
             {
                 num_ctx = contextSize,
                 num_predict = 1024
             }
         };
+
+        if (tools is { Count: > 0 })
+        {
+            payload["tools"] = tools.Select(tool => new
+            {
+                type = "function",
+                function = new
+                {
+                    name = tool.Name,
+                    description = tool.Description,
+                    parameters = tool.Parameters
+                }
+            }).ToArray();
+        }
 
         using var response = await _httpClient.PostAsJsonAsync(
             "api/chat",
@@ -98,23 +157,73 @@ public sealed class OllamaChatClient : IDisposable
             responseStream,
             cancellationToken: cancellationToken);
 
+        var root = document.RootElement;
+
         string? doneReason = null;
-        if (document.RootElement.TryGetProperty("done_reason", out var doneReasonElement))
+
+        if (root.TryGetProperty("done_reason", out var doneReasonElement) &&
+            doneReasonElement.ValueKind == JsonValueKind.String)
         {
             doneReason = doneReasonElement.GetString();
         }
 
-        if (document.RootElement.TryGetProperty("message", out var messageElement) &&
-            messageElement.TryGetProperty("content", out var contentElement))
-        {
-            string? content = contentElement.GetString();
+        string content = string.Empty;
+        var toolCalls = new List<AiChatToolCall>();
 
-            if (!string.IsNullOrWhiteSpace(content))
-                return new AiChatResult(content, doneReason);
+        if (root.TryGetProperty("message", out var messageElement))
+        {
+            if (messageElement.TryGetProperty("content", out var contentElement) &&
+                contentElement.ValueKind == JsonValueKind.String)
+            {
+                content = contentElement.GetString() ?? string.Empty;
+            }
+
+            if (messageElement.TryGetProperty("tool_calls", out var callsElement) &&
+                callsElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var callElement in callsElement.EnumerateArray())
+                {
+                    if (!callElement.TryGetProperty("function", out var functionElement))
+                        continue;
+
+                    if (!functionElement.TryGetProperty("name", out var nameElement) ||
+                        nameElement.ValueKind != JsonValueKind.String)
+                    {
+                        continue;
+                    }
+
+                    string? name = nameElement.GetString();
+
+                    if (string.IsNullOrWhiteSpace(name))
+                        continue;
+
+                    JsonElement arguments;
+
+                    if (functionElement.TryGetProperty("arguments", out var argumentsElement))
+                    {
+                        arguments = argumentsElement.Clone();
+                    }
+                    else
+                    {
+                        arguments = JsonSerializer.SerializeToElement(
+                            new Dictionary<string, object?>());
+                    }
+
+                    toolCalls.Add(new AiChatToolCall(name, arguments));
+                }
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(content) || toolCalls.Count > 0)
+        {
+            return new AiChatResult(
+                content,
+                doneReason,
+                toolCalls);
         }
 
         throw new InvalidOperationException(
-            "Ollama a répondu, mais aucun contenu exploitable n'a été retourné.");
+            "Ollama a répondu, mais aucun contenu ni appel d'outil exploitable n'a été retourné.");
     }
 
     public void Dispose()
