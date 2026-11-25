@@ -221,6 +221,7 @@ public class MainWindow : Window
 
         _aiToolRegistry.Register(new CreateFileTool());
         _aiToolRegistry.Register(new ReadFileTool());
+        _aiToolRegistry.Register(new ListFilesTool());
         _aiToolRegistry.Register(new UpdateFileTool());
         _aiToolRegistry.Register(new DeleteFileTool());
 
