@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Media;
 using KEYCE_KODER.Core.Execution;
+using KEYCE_KODER.App.Services;
 
 namespace KEYCE_KODER.App.Views;
 
@@ -135,12 +136,14 @@ public sealed class ConsoleView : RichTextBox
             return;
 
         string plain = AnsiSequence.Replace(text, "");
-        Brush baseBrush = kind switch
-        {
-            OutputKind.StdErr => ErrorOutputBrush(plain),
-            OutputKind.Info => InfoBrush,
-            _ => StdOutBrush,
-        };
+        Brush baseBrush = AppSettings.Current.EnableColoredExecutionOutput
+            ? (kind switch
+            {
+                OutputKind.StdErr => ErrorOutputBrush(plain),
+                OutputKind.Info => InfoBrush,
+                _ => StdOutBrush,
+            })
+            : StdOutBrush;
 
         if (kind != OutputKind.StdErr)
             _lastErrorWasRed = false;
@@ -181,8 +184,12 @@ public sealed class ConsoleView : RichTextBox
 
     private Run MakeRun(string text, Brush baseBrush)
     {
-        var run = new Run(text) { Foreground = _ansiForeground ?? baseBrush };
-        if (_ansiBold)
+        Brush foreground = AppSettings.Current.EnableColoredExecutionOutput
+            ? (_ansiForeground ?? baseBrush)
+            : StdOutBrush;
+
+        var run = new Run(text) { Foreground = foreground };
+        if (_ansiBold && AppSettings.Current.EnableColoredExecutionOutput)
             run.FontWeight = FontWeights.SemiBold;
         return run;
     }

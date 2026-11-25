@@ -1,0 +1,32 @@
+﻿namespace KEYCE_KODER.AI.Tools.Execution;
+
+public sealed class AiToolRegistry
+{
+    private readonly Dictionary<string, IAiTool> _tools =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    public void Register(IAiTool tool)
+    {
+        ArgumentNullException.ThrowIfNull(tool);
+
+        string name = tool.Definition.Name;
+
+        if (string.IsNullOrWhiteSpace(name))
+            throw new ArgumentException(
+                "Le nom de l'outil est obligatoire.");
+
+        if (!_tools.TryAdd(name, tool))
+            throw new InvalidOperationException(
+                $"L'outil '{name}' est déjà enregistré.");
+    }
+
+    public bool TryGetTool(string name, out IAiTool? tool)
+    {
+        return _tools.TryGetValue(name, out tool);
+    }
+
+    public IReadOnlyCollection<IAiTool> GetAll()
+    {
+        return _tools.Values.ToArray();
+    }
+}

@@ -1,10 +1,11 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using KEYCE_KODER.App.Services;
 
 namespace KEYCE_KODER.App.Views;
@@ -34,6 +35,8 @@ public sealed class AiPanel : Border
     public event Action<string, AiMode, string, bool, IReadOnlyList<string>>? MessageSubmitted;
     public event Action? ClearRequested;
     public event Action? CloseRequested;
+    public event Action? StopRequested;
+    public event Action? RetryRequested;
     public event Action<string>? ProposalAccepted;
     public event Action<string>? ProposalRejected;
 
@@ -57,6 +60,19 @@ public sealed class AiPanel : Border
     private readonly TextBlock _inputPlaceholder = new();
     private readonly Button _attachBtn = new();
     private readonly Button _sendBtn = new();
+    private readonly Button _stopBtn = new();
+
+    private readonly DispatcherTimer _animTimer = new() { Interval = TimeSpan.FromMilliseconds(350) };
+    private int _dotCount;
+    private string _baseStatusMessage = "Génération de réponse";
+    private Border? _pendingBubble;
+    private TextBlock? _pendingDotsText;
+
+    private bool _isGenerating;
+    private string _lastSubmittedPrompt = string.Empty;
+    private AssistantVisualState _currentVisualState = AssistantVisualState.Ready;
+
+    public bool IsGenerating => _isGenerating;
 
     private AiMode _currentMode = AiMode.Ask;
     private bool _thinkingEnabled = true;
@@ -66,6 +82,17 @@ public sealed class AiPanel : Border
         Background = Theme.Sidebar;
         BorderBrush = Theme.Border;
         BorderThickness = new Thickness(0);
+
+        _animTimer.Tick += (_, _) =>
+        {
+            _dotCount = (_dotCount % 3) + 1;
+            string dots = new string('.', _dotCount);
+            _statusText.Text = $"{_baseStatusMessage}{dots}";
+            if (_pendingDotsText != null)
+            {
+                _pendingDotsText.Text = dots;
+            }
+        };
 
         _thinkingEnabled = AppSettings.Current.AiThinkingEnabled;
 
@@ -153,10 +180,12 @@ public sealed class AiPanel : Border
         _clearBtn.Cursor = Cursors.Hand;
         _clearBtn.Click += (_, _) =>
         {
+            if (_isGenerating) return;
             _chatMessages.Children.Clear();
             _currentAttachments.Clear();
             _attachmentsHost.Children.Clear();
             ShowWelcomeMessage();
+            SetAssistantState(AssistantVisualState.Ready);
             ClearRequested?.Invoke();
         };
         rightBtns.Children.Add(_clearBtn);
@@ -182,7 +211,7 @@ public sealed class AiPanel : Border
         optionsRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         optionsRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var models = new[] { "Gemini 1.5 Pro", "Claude 3.5 Sonnet", "GPT-4o", "DeepSeek-R1" };
+        var models = new[] { "qwen3.5:latest", "qwen2.5-coder:latest" };
         foreach (var m in models) _modelSelector.Items.Add(m);
         _modelSelector.SelectedItem = models.FirstOrDefault(m => m == AppSettings.Current.AiModel) ?? models[0];
         _modelSelector.Height = 26;
@@ -193,6 +222,7 @@ public sealed class AiPanel : Border
             if (_modelSelector.SelectedItem is string m)
             {
                 AppSettings.Current.AiModel = m;
+                AppSettings.Current.Save();
             }
         };
         Grid.SetColumn(_modelSelector, 0);
@@ -207,6 +237,7 @@ public sealed class AiPanel : Border
         {
             _thinkingEnabled = !_thinkingEnabled;
             AppSettings.Current.AiThinkingEnabled = _thinkingEnabled;
+            AppSettings.Current.Save();
             UpdateThinkingButton();
         };
         UpdateThinkingButton();
@@ -314,6 +345,11 @@ public sealed class AiPanel : Border
             _inputPlaceholder.Visibility = string.IsNullOrEmpty(_inputBox.Text)
                 ? Visibility.Visible
                 : Visibility.Collapsed;
+
+            if (!_isGenerating && (_currentVisualState == AssistantVisualState.Interrupted || _currentVisualState == AssistantVisualState.Error))
+            {
+                SetAssistantState(AssistantVisualState.Ready);
+            }
         };
 
         _inputBox.KeyDown += (s, e) =>
@@ -359,7 +395,7 @@ public sealed class AiPanel : Border
         actionsRow.Children.Add(_attachBtn);
 
         _sendBtn.Content = SvgIconFactory.Create("send", 14);
-        _sendBtn.ToolTip = "Envoyer";
+        _sendBtn.ToolTip = "Envoyer (Entrée)";
         _sendBtn.Background = Theme.Accent;
         _sendBtn.BorderThickness = new Thickness(0);
         _sendBtn.Width = 32;
@@ -368,6 +404,18 @@ public sealed class AiPanel : Border
         _sendBtn.Click += (_, _) => Submit();
         Grid.SetColumn(_sendBtn, 1);
         actionsRow.Children.Add(_sendBtn);
+
+        _stopBtn.Content = SvgIconFactory.Create("stop", 14);
+        _stopBtn.ToolTip = "Arrêter la génération";
+        _stopBtn.Background = Theme.Red;
+        _stopBtn.BorderThickness = new Thickness(0);
+        _stopBtn.Width = 32;
+        _stopBtn.Height = 26;
+        _stopBtn.Cursor = Cursors.Hand;
+        _stopBtn.Visibility = Visibility.Collapsed;
+        _stopBtn.Click += (_, _) => StopRequested?.Invoke();
+        Grid.SetColumn(_stopBtn, 1);
+        actionsRow.Children.Add(_stopBtn);
 
         Grid.SetRow(actionsRow, 1);
         grid.Children.Add(actionsRow);
@@ -379,6 +427,24 @@ public sealed class AiPanel : Border
 
     private void SetMode(AiMode mode)
     {
+        if (_currentMode == mode)
+            return;
+
+        if (_currentMode == AiMode.Ask && mode == AiMode.Agent)
+        {
+            var result = MessageBox.Show(
+                "Vous allez passer en mode Agent.\n\n" +
+                "Ce mode est destiné à planifier et exécuter des actions sur votre projet. " +
+                "Aucune action ne sera lancée automatiquement.\n\n" +
+                "Voulez-vous continuer ?",
+                "Activer le mode Agent",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+
+            if (result != MessageBoxResult.Yes)
+                return;
+        }
+
         _currentMode = mode;
         UpdateModeButtons();
     }
@@ -423,6 +489,7 @@ public sealed class AiPanel : Border
 
     public void SetAssistantState(AssistantVisualState state, string? customMessage = null)
     {
+        _currentVisualState = state;
         switch (state)
         {
             case AssistantVisualState.Ready:
@@ -431,11 +498,13 @@ public sealed class AiPanel : Border
                 break;
             case AssistantVisualState.Thinking:
                 _statusDot.Background = new SolidColorBrush(Color.FromRgb(96, 170, 255));
-                _statusText.Text = customMessage ?? "Réflexion en cours…";
+                _baseStatusMessage = customMessage ?? "Réflexion en cours";
+                _statusText.Text = $"{_baseStatusMessage}…";
                 break;
             case AssistantVisualState.Generating:
                 _statusDot.Background = Theme.Accent;
-                _statusText.Text = customMessage ?? "Génération de réponse…";
+                _baseStatusMessage = customMessage ?? "Génération de réponse";
+                _statusText.Text = $"{_baseStatusMessage}…";
                 break;
             case AssistantVisualState.ExecutingAction:
                 _statusDot.Background = new SolidColorBrush(Color.FromRgb(167, 139, 250));
@@ -449,6 +518,95 @@ public sealed class AiPanel : Border
                 _statusDot.Background = Theme.Muted;
                 _statusText.Text = customMessage ?? "Interrompu";
                 break;
+        }
+    }
+
+    public void SetGenerating(bool isGenerating)
+    {
+        _isGenerating = isGenerating;
+        _inputBox.IsEnabled = !isGenerating;
+        _attachBtn.IsEnabled = !isGenerating;
+        _sendBtn.Visibility = isGenerating ? Visibility.Collapsed : Visibility.Visible;
+        _stopBtn.Visibility = isGenerating ? Visibility.Visible : Visibility.Collapsed;
+
+        if (isGenerating)
+        {
+            _dotCount = 0;
+            _animTimer.Start();
+
+            if (_pendingBubble == null)
+            {
+                _pendingBubble = new Border
+                {
+                    Background = Theme.PanelHeader,
+                    BorderBrush = Theme.Border,
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(8),
+                    Padding = new Thickness(10),
+                    Margin = new Thickness(0, 4, 20, 8),
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+
+                var sp = new StackPanel();
+                var titleRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 4) };
+                var aiIcon = SvgIconFactory.Create("ai", 13);
+                aiIcon.Margin = new Thickness(0, 0, 6, 0);
+                titleRow.Children.Add(aiIcon);
+                titleRow.Children.Add(new TextBlock
+                {
+                    Text = "KEYCE IA",
+                    FontWeight = FontWeights.Bold,
+                    FontSize = 11,
+                    Foreground = Theme.Text
+                });
+                sp.Children.Add(titleRow);
+
+                var animRow = new StackPanel { Orientation = Orientation.Horizontal };
+                animRow.Children.Add(new TextBlock
+                {
+                    Text = "Génération",
+                    FontSize = 12,
+                    Foreground = Theme.Muted
+                });
+                _pendingDotsText = new TextBlock
+                {
+                    Text = "...",
+                    FontSize = 12,
+                    FontWeight = FontWeights.Bold,
+                    Foreground = Theme.Accent,
+                    Margin = new Thickness(2, 0, 0, 0)
+                };
+                animRow.Children.Add(_pendingDotsText);
+                sp.Children.Add(animRow);
+
+                _pendingBubble.Child = sp;
+                _chatMessages.Children.Add(_pendingBubble);
+                _chatScroll.ScrollToEnd();
+            }
+        }
+        else
+        {
+            _animTimer.Stop();
+
+            if (_pendingBubble != null)
+            {
+                _chatMessages.Children.Remove(_pendingBubble);
+                _pendingBubble = null;
+                _pendingDotsText = null;
+            }
+
+            _inputBox.Focus();
+        }
+    }
+
+    public void RestorePrompt(string? prompt = null)
+    {
+        string toRestore = prompt ?? _lastSubmittedPrompt;
+        if (!string.IsNullOrEmpty(toRestore))
+        {
+            _inputBox.Text = toRestore;
+            _inputBox.CaretIndex = _inputBox.Text.Length;
+            _inputBox.Focus();
         }
     }
 
@@ -493,16 +651,21 @@ public sealed class AiPanel : Border
 
     private void Submit()
     {
+        if (_isGenerating) return;
+
         string text = _inputBox.Text.Trim();
         if (string.IsNullOrEmpty(text)) return;
 
-        AddUserMessage(text, _currentAttachments.ToList());
+        _lastSubmittedPrompt = text;
+        var attachments = _currentAttachments.ToList();
+
+        AddUserMessage(text, attachments);
         _inputBox.Clear();
         _currentAttachments.Clear();
         _attachmentsHost.Children.Clear();
 
-        string model = _modelSelector.SelectedItem as string ?? "Gemini 1.5 Pro";
-        MessageSubmitted?.Invoke(text, _currentMode, model, _thinkingEnabled, _currentAttachments.AsReadOnly());
+        string model = _modelSelector.SelectedItem as string ?? "qwen3.5:latest";
+        MessageSubmitted?.Invoke(text, _currentMode, model, _thinkingEnabled, attachments);
     }
 
     public void AddUserMessage(string message, IReadOnlyList<string>? attachments = null)
@@ -558,12 +721,19 @@ public sealed class AiPanel : Border
         _chatScroll.ScrollToEnd();
     }
 
-    public void AddAssistantMessage(string message, string? codeSnippet = null, string? proposalAction = null)
+    public void AddAssistantMessage(
+        string message,
+        string? codeSnippet = null,
+        string? proposalAction = null,
+        bool isError = false,
+        bool isTruncated = false,
+        string? warningMessage = null,
+        bool allowRetry = false)
     {
         var card = new Border
         {
             Background = Theme.PanelHeader,
-            BorderBrush = Theme.Border,
+            BorderBrush = isError ? Theme.Red : Theme.Border,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(8),
             Padding = new Thickness(10),
@@ -573,24 +743,78 @@ public sealed class AiPanel : Border
 
         var sp = new StackPanel();
 
-        var titleRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 4) };
+        var titleGrid = new Grid { Margin = new Thickness(0, 0, 0, 6) };
+        titleGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        titleGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var titleLeft = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         var aiIcon = SvgIconFactory.Create("ai", 13);
         aiIcon.Margin = new Thickness(0, 0, 6, 0);
-        titleRow.Children.Add(aiIcon);
-        titleRow.Children.Add(new TextBlock
+        titleLeft.Children.Add(aiIcon);
+        titleLeft.Children.Add(new TextBlock
         {
             Text = "KEYCE IA",
             FontWeight = FontWeights.Bold,
             FontSize = 11,
-            Foreground = Theme.Text
+            Foreground = isError ? Theme.Red : Theme.Text
         });
-        sp.Children.Add(titleRow);
+        Grid.SetColumn(titleLeft, 0);
+        titleGrid.Children.Add(titleLeft);
+
+        var copyResponseBtn = new Button
+        {
+            Content = SvgIconFactory.Create("copy", 12),
+            ToolTip = "Copier la réponse",
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Width = 22,
+            Height = 22,
+            Cursor = Cursors.Hand
+        };
+        copyResponseBtn.Click += (_, _) =>
+        {
+            Clipboard.SetText(message);
+            copyResponseBtn.ToolTip = "Copié !";
+            copyResponseBtn.Content = SvgIconFactory.Create("check", 12);
+            var t = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+            t.Tick += (_, _) =>
+            {
+                t.Stop();
+                copyResponseBtn.ToolTip = "Copier la réponse";
+                copyResponseBtn.Content = SvgIconFactory.Create("copy", 12);
+            };
+            t.Start();
+        };
+        Grid.SetColumn(copyResponseBtn, 1);
+        titleGrid.Children.Add(copyResponseBtn);
+        sp.Children.Add(titleGrid);
+
+        if (!string.IsNullOrEmpty(warningMessage))
+        {
+            var warnBorder = new Border
+            {
+                Background = Theme.Panel,
+                BorderBrush = Theme.Accent,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(8, 4, 8, 4),
+                Margin = new Thickness(0, 0, 0, 6)
+            };
+            warnBorder.Child = new TextBlock
+            {
+                Text = warningMessage,
+                FontSize = 11,
+                Foreground = Theme.Accent,
+                TextWrapping = TextWrapping.Wrap
+            };
+            sp.Children.Add(warnBorder);
+        }
 
         sp.Children.Add(new TextBlock
         {
             Text = message,
             FontSize = 12,
-            Foreground = Theme.Text,
+            Foreground = isError ? Theme.Red : Theme.Text,
             TextWrapping = TextWrapping.Wrap
         });
 
@@ -625,7 +849,16 @@ public sealed class AiPanel : Border
             copyBtn.Click += (_, _) =>
             {
                 Clipboard.SetText(codeSnippet);
-                MessageBox.Show("Code copié dans le presse-papiers !", "KEYCE IA", MessageBoxButton.OK, MessageBoxImage.Information);
+                copyBtn.ToolTip = "Copié !";
+                copyBtn.Content = SvgIconFactory.Create("check", 12);
+                var t = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+                t.Tick += (_, _) =>
+                {
+                    t.Stop();
+                    copyBtn.ToolTip = "Copier le code";
+                    copyBtn.Content = SvgIconFactory.Create("copy", 12);
+                };
+                t.Start();
             };
             Grid.SetRow(copyBtn, 0);
             codeGrid.Children.Add(copyBtn);
@@ -697,6 +930,34 @@ public sealed class AiPanel : Border
             sp.Children.Add(actionBorder);
         }
 
+        if (allowRetry || isError || isTruncated)
+        {
+            var retryBtn = new Button
+            {
+                Background = Theme.Surface,
+                BorderBrush = Theme.Border,
+                BorderThickness = new Thickness(1),
+                Padding = new Thickness(8, 3, 8, 3),
+                Margin = new Thickness(0, 8, 0, 0),
+                Cursor = Cursors.Hand,
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+            var retrySp = new StackPanel { Orientation = Orientation.Horizontal };
+            var refreshIcon = SvgIconFactory.Create("refresh", 11);
+            refreshIcon.Margin = new Thickness(0, 0, 4, 0);
+            retrySp.Children.Add(refreshIcon);
+            retrySp.Children.Add(new TextBlock
+            {
+                Text = "Réessayer",
+                FontSize = 11,
+                Foreground = Theme.Text,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+            retryBtn.Content = retrySp;
+            retryBtn.Click += (_, _) => RetryRequested?.Invoke();
+            sp.Children.Add(retryBtn);
+        }
+
         card.Child = sp;
         _chatMessages.Children.Add(card);
         _chatScroll.ScrollToEnd();
@@ -743,3 +1004,5 @@ public sealed class AiPanel : Border
         _chatMessages.Children.Add(welcome);
     }
 }
+
+

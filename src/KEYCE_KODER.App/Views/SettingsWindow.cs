@@ -777,8 +777,15 @@ public sealed class SettingsWindow : Window
             Margin = new Thickness(0, 0, 0, 12)
         });
 
-        AddCheckbox("Activer les messages d'exécution colorés", true, _ => { });
-        AddCheckbox("Arrêt automatique du processus précédent au lancement d'un nouveau Run", true, _ => { });
+        AddCheckbox(
+            "Activer les messages d'exécution colorés",
+            _settings.EnableColoredExecutionOutput,
+            v => _settings.EnableColoredExecutionOutput = v);
+
+        AddCheckbox(
+            "Arrêt automatique du processus précédent au lancement d'un nouveau Run",
+            _settings.AutoStopPreviousRun,
+            v => _settings.AutoStopPreviousRun = v);
     }
 
     private void BuildShortcutsOptions()

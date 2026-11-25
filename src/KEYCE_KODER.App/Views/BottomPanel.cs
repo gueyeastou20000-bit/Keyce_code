@@ -9,6 +9,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using KEYCE_KODER.Core.Execution;
 using KEYCE_KODER.Terminal;
+using KEYCE_KODER.App.Services;
 
 namespace KEYCE_KODER.App.Views;
 
@@ -227,7 +228,23 @@ public sealed class BottomPanel : Grid
 
     private async Task RunAsync()
     {
-        if (_runner.State == RunState.Running || !_run.IsEnabled) return;
+        if (_runner.State == RunState.Running)
+        {
+            if (AppSettings.Current.AutoStopPreviousRun)
+            {
+                _runner.Stop();
+                for (int i = 0; i < 20 && _runner.State == RunState.Running; i++)
+                {
+                    await Task.Delay(50);
+                }
+            }
+            else
+            {
+                return;
+            }
+        }
+
+        if (!_run.IsEnabled) return;
 
         _run.IsEnabled = false;
         try

@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\KEYCE_KODER.Core\KEYCE_KODER.Core.csproj" />
+    <ProjectReference Include="..\..\src\KEYCE_KODER.AI\KEYCE_KODER.AI.csproj" />
   </ItemGroup>
 
 </Project>

@@ -99,11 +99,16 @@ public sealed class AppSettings
     public bool ConfirmOnExit { get; set; } = true;
 
     // 7. Intelligence Artificielle
-    public string AiModel { get; set; } = "Gemini 1.5 Pro";
-    public bool AiThinkingEnabled { get; set; } = true;
+    public string AiModel { get; set; } = "qwen3.5:latest";
+    public bool AiThinkingEnabled { get; set; } = false;
+    public int AiContextSize { get; set; } = 4096;
 
     // 8. Projets récents
     public List<string> RecentProjects { get; set; } = new();
+
+    // 9. Exécution multi-langages & Débogage
+    public bool EnableColoredExecutionOutput { get; set; } = true;
+    public bool AutoStopPreviousRun { get; set; } = true;
 
     public void AddRecentProject(string path)
     {
@@ -123,7 +128,16 @@ public sealed class AppSettings
             {
                 string json = File.ReadAllText(SettingsPath);
                 var loaded = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions);
-                if (loaded != null) return loaded;
+                if (loaded != null)
+                {
+                    if (loaded.AiModel == "Gemini 1.5 Pro")
+                    {
+                        loaded.AiModel = "qwen3.5:latest";
+                        loaded.Save();
+                    }
+
+                    return loaded;
+                }
             }
         }
         catch

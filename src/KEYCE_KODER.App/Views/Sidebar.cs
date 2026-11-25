@@ -28,7 +28,6 @@ public class Sidebar : Border
         ["debug"] = "EXÉCUTER ET DÉBOGUER",
         ["settings"] = "PARAMÈTRES",
         ["tools"] = "LANGAGES ET OUTILS",
-        ["account"] = "COMPTE",
         ["extensions"] = "EXTENSIONS"
     };
 
@@ -48,7 +47,7 @@ public class Sidebar : Border
         BorderBrush = Theme.Border;
         BorderThickness = new Thickness(0, 0, 1, 0);
 
-        _views["explorer"] = BuildExplorerHost();
+        _views["explorer"] = Explorer;
 
         Search = new SearchPanel(() => Explorer.CurrentFolder);
         _views["search"] = Search;
@@ -63,9 +62,8 @@ public class Sidebar : Border
 
         _views["settings"] = Settings;
 
-        // Vues complémentaires
-        _views["account"] = Placeholder("Gestion de profil et synchronisation des paramètres.");
-        _views["extensions"] = Placeholder("Gestionnaire d'extensions et thèmes personnalisés.");
+        // TODO: Implémenter le gestionnaire d'extensions et thèmes personnalisés.
+        _views["extensions"] = Placeholder("Extensions : fonctionnalité non disponible pour le moment.");
 
         var dock = new DockPanel();
         DockPanel.SetDock(_title, Dock.Top);
@@ -76,41 +74,6 @@ public class Sidebar : Border
 
         ShowView("explorer");
     }
-
-    /// <summary>Explorateur en haut avec sections OUTLINE et TIMELINE repliables en bas (design Astou).</summary>
-    private UIElement BuildExplorerHost()
-    {
-        var grid = new Grid();
-        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-        Grid.SetRow(Explorer, 0);
-        grid.Children.Add(Explorer);
-
-        var sections = new StackPanel();
-        sections.Children.Add(MakeSection("OUTLINE"));
-        sections.Children.Add(MakeSection("TIMELINE"));
-        Grid.SetRow(sections, 1);
-        grid.Children.Add(sections);
-
-        return grid;
-    }
-
-    private static Expander MakeSection(string title) => new()
-    {
-        Header = new TextBlock
-        {
-            Text = title,
-            Foreground = Theme.Text,
-            FontWeight = FontWeights.SemiBold,
-            FontSize = 11
-        },
-        Foreground = Theme.Muted,
-        Padding = new Thickness(8, 4, 8, 4),
-        BorderBrush = Theme.Border,
-        BorderThickness = new Thickness(0, 1, 0, 0),
-        IsExpanded = false
-    };
 
     private static UIElement Placeholder(string message) => new TextBlock
     {

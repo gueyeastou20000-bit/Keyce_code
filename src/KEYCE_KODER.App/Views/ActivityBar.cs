@@ -38,7 +38,6 @@ public class ActivityBar : Border
         AddSvgButton(_top, "debug", "debug", "Exécuter et déboguer (Ctrl+Maj+D)");
 
         AddSvgButton(_bottom, "tools", "tools", "Langages et outils");
-        AddSvgButton(_bottom, "account", "account", "Compte");
         AddSvgButton(_bottom, "settings", "settings", "Paramètres");
 
         Select(explorer);

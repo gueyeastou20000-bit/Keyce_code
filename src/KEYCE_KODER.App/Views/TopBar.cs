@@ -104,10 +104,6 @@ public class TopBar : Border
         };
         right.Children.Add(settingsBtn);
 
-        // Bouton Notifications
-        var bellBtn = MakeSvgIconButton("bell", "Notifications");
-        right.Children.Add(bellBtn);
-
         // Séparateur vertical discret
         right.Children.Add(new Border
         {

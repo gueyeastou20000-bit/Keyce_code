@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -12,6 +14,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 
+using KEYCE_KODER.AI;
 using KEYCE_KODER.App.Actions;
 using KEYCE_KODER.App.Commands;
 using KEYCE_KODER.App.Debugging;
@@ -64,6 +67,16 @@ public class MainWindow : Window
 
     // Panneau IA latéral droit rétractable
     private readonly AiPanel _aiPanel;
+    private readonly OllamaChatClient _ollamaClient = new();
+    private readonly List<AiChatMessage> _aiHistory = new();
+    private CancellationTokenSource? _aiCts;
+    private (string Msg, AiMode Mode, string Model, bool Thinking, IReadOnlyList<string> Atts)? _lastAiSubmission;
+
+    private const string AiSystemPrompt =
+        "Tu es KEYCE KODER, un assistant intégré à un environnement de développement logiciel. " +
+        "Tu réponds en français par défaut, tu expliques clairement et tu proposes du code fiable. " +
+        "En mode Ask, tu analyses et conseilles sans prétendre modifier les fichiers ni exécuter des actions. " +
+        "Tu ne prétends jamais avoir accès au projet si son contenu ne t'a pas été transmis.";
     private readonly Border _aiHost;
     private readonly GridSplitter _aiSplitter;
     private readonly ColumnDefinition _aiCol = new() { Width = GridLength.Auto };
@@ -339,23 +352,36 @@ public class MainWindow : Window
         // Panneau IA latéral droit rétractable
         _aiPanel = new AiPanel();
         _aiPanel.CloseRequested += () => SetAiPanelVisible(false);
+
+        _aiPanel.StopRequested += () =>
+        {
+            try
+            {
+                _aiCts?.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        };
+
+        _aiPanel.RetryRequested += async () =>
+        {
+            if (_lastAiSubmission == null || _aiCts != null) return;
+            var (msg, mode, model, thinking, atts) = _lastAiSubmission.Value;
+            await ExecuteAiRequestAsync(msg, mode, model, thinking, atts);
+        };
+
         _aiPanel.MessageSubmitted += async (msg, mode, model, thinking, atts) =>
         {
-            _aiPanel.SetAssistantState(AssistantVisualState.Generating);
-            await Task.Delay(300);
+            if (_aiCts != null) return;
+            _lastAiSubmission = (msg, mode, model, thinking, atts);
+            await ExecuteAiRequestAsync(msg, mode, model, thinking, atts);
+        };
 
-            var tab = _tabManager.ActiveTab;
-            string docInfo = tab != null ? $"Fichier actif : {tab.Document.Name}" : "Aucun fichier ouvert";
-
-            if (msg.Contains("aide", StringComparison.OrdinalIgnoreCase) || msg.Contains("help", StringComparison.OrdinalIgnoreCase))
-            {
-                _aiPanel.AddAssistantMessage($"Bonjour ! Je suis l'assistant IA de KEYCE KODER.\nMode : {mode} | Modèle : {model} | {docInfo}\n\nPosez vos questions ou décrivez les modifications souhaitées.");
-            }
-            else
-            {
-                _aiPanel.AddAssistantMessage($"[KEYCE IA - {model}]\nDemande reçue ({mode}) : « {msg} »\n\nContexte : {docInfo}.\nAssistant prêt.");
-            }
-            _aiPanel.SetAssistantState(AssistantVisualState.Ready);
+        _aiPanel.ClearRequested += () =>
+        {
+            _lastAiSubmission = null;
+            _aiHistory.Clear();
         };
 
         _aiSplitter = new GridSplitter
@@ -599,6 +625,122 @@ public class MainWindow : Window
     private void ToggleAiPanel()
     {
         SetAiPanelVisible(_aiHost.Visibility != Visibility.Visible);
+    }
+
+    private async Task ExecuteAiRequestAsync(string msg, AiMode mode, string model, bool thinking, IReadOnlyList<string> atts)
+    {
+        if (_aiCts != null) return;
+
+        if (mode == AiMode.Agent)
+        {
+            _aiPanel.AddAssistantMessage(
+                "Le moteur Agent n'est pas encore disponible. " +
+                "Votre demande n'a pas été exécutée. Vous pouvez repasser en mode Ask.");
+            _aiPanel.SetAssistantState(AssistantVisualState.Ready);
+            return;
+        }
+
+        var currentCts = new CancellationTokenSource();
+        _aiCts = currentCts;
+        _aiPanel.SetGenerating(true);
+
+        if (thinking)
+            _aiPanel.SetAssistantState(AssistantVisualState.Thinking, "Réflexion en cours");
+        else
+            _aiPanel.SetAssistantState(AssistantVisualState.Generating, "Génération de réponse");
+
+        try
+        {
+            var requestMessages = new List<AiChatMessage>();
+
+            if (_aiHistory.Count == 0)
+                requestMessages.Add(new AiChatMessage("system", AiSystemPrompt));
+            else
+                requestMessages.AddRange(_aiHistory);
+
+            var tab = _tabManager.ActiveTab;
+            string docInfo = tab != null
+                ? $"Fichier actif dans l'IDE : {tab.Document.Name}"
+                : "Aucun fichier ouvert dans l'IDE.";
+
+            string userContent = msg + "\n\n" + docInfo;
+
+            if (atts != null && atts.Count > 0)
+            {
+                userContent += "\nLes pièces jointes sont affichées dans l'interface, " +
+                               "mais leur contenu n'a pas encore été transmis au modèle.";
+            }
+
+            requestMessages.Add(new AiChatMessage("user", userContent));
+
+            currentCts.Token.ThrowIfCancellationRequested();
+
+            var result = await _ollamaClient.SendChatAsync(
+                model,
+                requestMessages,
+                thinking,
+                AppSettings.Current.AiContextSize,
+                currentCts.Token);
+
+            currentCts.Token.ThrowIfCancellationRequested();
+
+            if (result.IsTruncated)
+            {
+                // Limite de tokens atteinte (done_reason: length). Réponse incomplète.
+                _aiPanel.AddAssistantMessage(
+                    result.Content,
+                    isTruncated: true,
+                    warningMessage: "Réponse interrompue : la limite de tokens a été atteinte (réponse incomplète).",
+                    allowRetry: true);
+                _aiPanel.SetAssistantState(AssistantVisualState.Ready);
+            }
+            else
+            {
+                if (_aiHistory.Count == 0)
+                    _aiHistory.Add(new AiChatMessage("system", AiSystemPrompt));
+
+                _aiHistory.Add(new AiChatMessage("user", userContent));
+                _aiHistory.Add(new AiChatMessage("assistant", result.Content));
+
+                _aiPanel.AddAssistantMessage(result.Content);
+                _aiPanel.SetAssistantState(AssistantVisualState.Ready);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            _aiPanel.SetAssistantState(AssistantVisualState.Interrupted, "Interrompu");
+            _aiPanel.AddAssistantMessage("Génération interrompue par l'utilisateur.");
+            _aiPanel.RestorePrompt(msg);
+        }
+        catch (HttpRequestException ex)
+        {
+            _aiPanel.SetAssistantState(AssistantVisualState.Error, "Erreur de connexion Ollama");
+            _aiPanel.AddAssistantMessage(
+                "Impossible de contacter le serveur Ollama.\n\n" +
+                "Vérifiez qu'Ollama fonctionne et que le modèle spécifié est disponible.\n\n" +
+                "Détail : " + ex.Message,
+                isError: true,
+                allowRetry: true);
+        }
+        catch (Exception ex)
+        {
+            _aiPanel.SetAssistantState(AssistantVisualState.Error, "Erreur");
+            _aiPanel.AddAssistantMessage(
+                "Impossible d'obtenir une réponse de l'assistant IA.\n\n" +
+                "Détail : " + ex.Message,
+                isError: true,
+                allowRetry: true);
+        }
+        finally
+        {
+            if (ReferenceEquals(_aiCts, currentCts))
+            {
+                _aiCts = null;
+            }
+            currentCts.Dispose();
+
+            _aiPanel.SetGenerating(false);
+        }
     }
 
     private void ShowWelcome()
@@ -936,7 +1078,8 @@ public class MainWindow : Window
         _debugger.Stop();
         _runner.Stop();
         _terminal.Dispose();
-
+        try { _aiCts?.Cancel(); _aiCts?.Dispose(); } catch { }
+        _ollamaClient.Dispose();
         foreach (PdfViewer viewer in _pdfViewers)
             viewer.Cleanup();
     }
