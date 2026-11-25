@@ -1,0 +1,7 @@
+namespace KEYCE_KODER.AI.Tools.Contracts;
+
+public sealed record AiToolResult(
+    bool Success,
+    string Message,
+    string? ErrorCode = null
+);

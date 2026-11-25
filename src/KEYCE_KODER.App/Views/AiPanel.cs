@@ -722,14 +722,14 @@ public sealed class AiPanel : Border
     }
 
     public void AddAssistantMessage(
-        string message,
-        string? codeSnippet = null,
-        string? proposalAction = null,
-        bool isError = false,
-        bool isTruncated = false,
-        string? warningMessage = null,
-        bool allowRetry = false,
-        string? proposalId = null)
+    string message,
+    string? codeSnippet = null,
+    string? proposalAction = null,
+    bool isError = false,
+    bool isTruncated = false,
+    string? warningMessage = null,
+    bool allowRetry = false,
+    string? proposalId = null)
     {
         var card = new Border
         {
@@ -744,6 +744,7 @@ public sealed class AiPanel : Border
 
         var sp = new StackPanel();
 
+        // ── Titre + bouton copier la réponse ─────────────────────────
         var titleGrid = new Grid { Margin = new Thickness(0, 0, 0, 6) };
         titleGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         titleGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -790,6 +791,7 @@ public sealed class AiPanel : Border
         titleGrid.Children.Add(copyResponseBtn);
         sp.Children.Add(titleGrid);
 
+        // ── Message d'avertissement éventuel ─────────────────────────
         if (!string.IsNullOrEmpty(warningMessage))
         {
             var warnBorder = new Border
@@ -811,6 +813,7 @@ public sealed class AiPanel : Border
             sp.Children.Add(warnBorder);
         }
 
+        // ── Texte du message ─────────────────────────────────────────
         sp.Children.Add(new TextBlock
         {
             Text = message,
@@ -819,7 +822,7 @@ public sealed class AiPanel : Border
             TextWrapping = TextWrapping.Wrap
         });
 
-        // Bloc de code avec bouton copier
+        // ── Bloc de code avec bouton copier ──────────────────────────
         if (!string.IsNullOrEmpty(codeSnippet))
         {
             var codeHost = new Border
@@ -880,7 +883,7 @@ public sealed class AiPanel : Border
             sp.Children.Add(codeHost);
         }
 
-        // Action proposée (Accepter / Refuser)
+        // ── Action proposée (Accepter / Refuser) ─────────────────────
         if (!string.IsNullOrEmpty(proposalAction))
         {
             var actionBorder = new Border
@@ -894,9 +897,17 @@ public sealed class AiPanel : Border
             };
 
             var actSp = new StackPanel();
-            actSp.Children.Add(new TextBlock { Text = proposalAction, FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = Theme.Accent, Margin = new Thickness(0, 0, 0, 6) });
+            actSp.Children.Add(new TextBlock
+            {
+                Text = proposalAction,
+                FontSize = 11,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = Theme.Accent,
+                Margin = new Thickness(0, 0, 0, 6)
+            });
 
             var btnRow = new StackPanel { Orientation = Orientation.Horizontal };
+
             var acceptBtn = new Button
             {
                 Content = "Accepter",
@@ -909,7 +920,6 @@ public sealed class AiPanel : Border
                 Cursor = Cursors.Hand,
                 Margin = new Thickness(0, 0, 8, 0)
             };
-            acceptBtn.Click += (_, _) => ProposalAccepted?.Invoke(proposalId ?? proposalAction);
 
             var rejectBtn = new Button
             {
@@ -921,7 +931,43 @@ public sealed class AiPanel : Border
                 BorderThickness = new Thickness(0),
                 Cursor = Cursors.Hand
             };
-            rejectBtn.Click += (_, _) => ProposalRejected?.Invoke(proposalId ?? proposalAction);
+
+            // Anti-double-clic + feedback visuel
+            string confirmationId = proposalId ?? proposalAction;
+            bool decisionSent = false;
+
+            void SubmitDecision(bool approved)
+            {
+                if (decisionSent)
+                    return;
+
+                decisionSent = true;
+
+                // Remplace les boutons par le choix effectué.
+                btnRow.Children.Clear();
+
+                btnRow.Children.Add(new TextBlock
+                {
+                    Text = approved
+                        ? "Autorisation accordée. Exécution en cours..."
+                        : "Opération refusée.",
+                    FontSize = 11,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = approved ? Theme.Green : Theme.Text,
+                    TextWrapping = TextWrapping.Wrap
+                });
+
+                acceptBtn.IsEnabled = false;
+                rejectBtn.IsEnabled = false;
+
+                if (approved)
+                    ProposalAccepted?.Invoke(confirmationId);
+                else
+                    ProposalRejected?.Invoke(confirmationId);
+            }
+
+            acceptBtn.Click += (_, _) => SubmitDecision(true);
+            rejectBtn.Click += (_, _) => SubmitDecision(false);
 
             btnRow.Children.Add(acceptBtn);
             btnRow.Children.Add(rejectBtn);
@@ -931,6 +977,7 @@ public sealed class AiPanel : Border
             sp.Children.Add(actionBorder);
         }
 
+        // ── Bouton Réessayer ─────────────────────────────────────────
         if (allowRetry || isError || isTruncated)
         {
             var retryBtn = new Button

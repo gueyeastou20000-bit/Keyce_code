@@ -1,0 +1,7 @@
+namespace KEYCE_KODER.AI.Tools.Contracts;
+
+public sealed record AiToolDefinition(
+    string Name,
+    string Description,
+    bool RequiresConfirmation
+);

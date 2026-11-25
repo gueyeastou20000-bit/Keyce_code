@@ -1,0 +1,50 @@
+namespace KEYCE_KODER.AI.Tools.Execution;
+
+public sealed class AiToolContext
+{
+    public string ProjectRoot { get; }
+
+    public AiToolContext(string projectRoot)
+    {
+        if (string.IsNullOrWhiteSpace(projectRoot))
+            throw new ArgumentException(
+                "Le dossier du projet est obligatoire.",
+                nameof(projectRoot));
+
+        ProjectRoot = Path.GetFullPath(projectRoot);
+    }
+
+    public string ResolveProjectPath(string relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath))
+            throw new ArgumentException(
+                "Le chemin du fichier est obligatoire.",
+                nameof(relativePath));
+
+        if (Path.IsPathRooted(relativePath))
+            throw new UnauthorizedAccessException(
+                "Les chemins absolus ne sont pas autorisés.");
+
+        string fullPath = Path.GetFullPath(
+            Path.Combine(ProjectRoot, relativePath));
+
+        string relativeToRoot = Path.GetRelativePath(
+            ProjectRoot,
+            fullPath);
+
+        if (Path.IsPathRooted(relativeToRoot) ||
+            relativeToRoot == ".." ||
+            relativeToRoot.StartsWith(
+                ".." + Path.DirectorySeparatorChar,
+                StringComparison.Ordinal) ||
+            relativeToRoot.StartsWith(
+                ".." + Path.AltDirectorySeparatorChar,
+                StringComparison.Ordinal))
+        {
+            throw new UnauthorizedAccessException(
+                "L'accès en dehors du dossier du projet est interdit.");
+        }
+
+        return fullPath;
+    }
+}
