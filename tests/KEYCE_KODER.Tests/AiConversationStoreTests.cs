@@ -177,4 +177,37 @@ public sealed class AiConversationStoreTests
             Directory.Delete(directory, true);
         }
     }
+
+    [TestMethod]
+    public async Task DeleteConversation_ShouldPersistRemainingConversations()
+    {
+        string directory = CreateTemporaryDirectory();
+
+        try
+        {
+            var store = new AiConversationStore(
+                Path.Combine(directory, "conversations.json"));
+
+            var conv1 = new AiConversation { Title = "Conversation 1" };
+            var conv2 = new AiConversation { Title = "Conversation 2" };
+            var conv3 = new AiConversation { Title = "Conversation 3" };
+
+            var list = new List<AiConversation> { conv1, conv2, conv3 };
+            await store.SaveAsync(list);
+
+            // Suppression de conv2
+            list.Remove(conv2);
+            await store.SaveAsync(list);
+
+            var loaded = await store.LoadAsync();
+            Assert.AreEqual(2, loaded.Count);
+            Assert.IsTrue(loaded.Any(c => c.Id == conv1.Id));
+            Assert.IsFalse(loaded.Any(c => c.Id == conv2.Id));
+            Assert.IsTrue(loaded.Any(c => c.Id == conv3.Id));
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
 }

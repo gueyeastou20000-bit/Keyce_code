@@ -437,6 +437,89 @@ public class MainWindow : Window
             StartNewAiConversation();
         };
 
+        _aiPanel.HistoryRequested += () =>
+        {
+            if (_aiPanel.IsHistoryVisible)
+            {
+                _aiPanel.ShowHistoryView(false);
+            }
+            else
+            {
+                _aiPanel.UpdateHistoryList(_aiConversations, _activeAiConversation?.Id);
+                _aiPanel.ShowHistoryView(true);
+            }
+        };
+
+        _aiPanel.ConversationSelected += (id) =>
+        {
+            if (_aiCts != null)
+            {
+                _aiPanel.AddAssistantMessage(
+                    "Arrêtez d'abord la génération en cours avant de changer de conversation.",
+                    isError: true);
+                return;
+            }
+
+            var selectedConv = _aiConversations.FirstOrDefault(c => c.Id == id);
+            if (selectedConv == null)
+                return;
+
+            _activeAiConversation = selectedConv;
+            _lastAiSubmission = null;
+
+            if (!Enum.TryParse<AiMode>(selectedConv.ActiveMode, true, out var restoredMode))
+                restoredMode = AiMode.Ask;
+
+            _aiPanel.RestoreConversationSettings(selectedConv.Model, restoredMode);
+
+            _aiHistory.Clear();
+            foreach (var message in selectedConv.Messages)
+            {
+                _aiHistory.Add(new AiChatMessage(
+                    message.Role,
+                    message.Content,
+                    message.ToolCalls));
+            }
+
+            if (!_aiHistory.Any(m => string.Equals(m.Role, "system", StringComparison.OrdinalIgnoreCase)))
+            {
+                _aiHistory.Insert(0, new AiChatMessage("system", AiSystemPrompt));
+            }
+
+            _aiPanel.RestoreConversationMessages(selectedConv.Messages);
+            _aiPanel.ShowHistoryView(false);
+        };
+
+        _aiPanel.ConversationDeleted += async (id) =>
+        {
+            var toDelete = _aiConversations.FirstOrDefault(c => c.Id == id);
+            if (toDelete == null)
+                return;
+
+            _aiConversations.Remove(toDelete);
+
+            try
+            {
+                await _aiConversationStore.SaveAsync(_aiConversations);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    this,
+                    "Erreur lors de la sauvegarde après suppression :\n\n" + ex.Message,
+                    "Suppression de conversation",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+
+            if (_activeAiConversation?.Id == id)
+            {
+                StartNewAiConversation();
+            }
+
+            _aiPanel.UpdateHistoryList(_aiConversations, _activeAiConversation?.Id);
+        };
+
         _aiSplitter = new GridSplitter
         {
             Width = 4,
@@ -685,8 +768,10 @@ public class MainWindow : Window
             HasCustomContextSize = false
         };
 
-        // Vider l'affichage du panneau.
+        // Vider l'affichage du panneau et réafficher le message d'accueil.
         _aiPanel.ClearConversationMessages();
+        _aiPanel.ShowWelcomeMessage();
+        _aiPanel.ShowHistoryView(false);
 
         // Revenir au modèle par défaut et au mode Ask.
         _aiPanel.RestoreConversationSettings(
@@ -761,6 +846,13 @@ public class MainWindow : Window
             // Restaurer uniquement les messages visibles.
             _aiPanel.RestoreConversationMessages(
                 _activeAiConversation.Messages);
+
+            if (_activeAiConversation.Messages.Count == 0)
+            {
+                _aiPanel.ShowWelcomeMessage();
+            }
+
+            _aiPanel.UpdateHistoryList(_aiConversations, _activeAiConversation.Id);
         }
         catch (Exception ex)
         {
@@ -1560,6 +1652,8 @@ public class MainWindow : Window
 
         // Enregistrer toutes les conversations.
         await _aiConversationStore.SaveAsync(_aiConversations);
+
+        _aiPanel.UpdateHistoryList(_aiConversations, _activeAiConversation.Id);
     }
     private void ShowWelcome()
     {

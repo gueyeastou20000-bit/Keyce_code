@@ -37,6 +37,8 @@ public sealed class AiPanel : Border
     public event Action<AiMode, string>? ConversationSettingsChanged;
     public event Action? ClearRequested;
     public event Action? HistoryRequested;
+    public event Action<Guid>? ConversationSelected;
+    public event Action<Guid>? ConversationDeleted;
     public event Action? CloseRequested;
     public event Action? StopRequested;
     public event Action? RetryRequested;
@@ -53,6 +55,10 @@ public sealed class AiPanel : Border
 
     private readonly Border _statusDot = new();
     private readonly TextBlock _statusText = new();
+
+    private readonly Border _historyOverlay = new();
+    private readonly StackPanel _historyItemsHost = new();
+    private readonly TextBlock _historyCountText = new();
 
     private readonly ScrollViewer _chatScroll = new();
     private readonly StackPanel _chatMessages = new();
@@ -77,6 +83,7 @@ public sealed class AiPanel : Border
     private AssistantVisualState _currentVisualState = AssistantVisualState.Ready;
 
     public bool IsGenerating => _isGenerating;
+    public bool IsHistoryVisible => _historyOverlay.Visibility == Visibility.Visible;
     private bool _isRestoringConversationSettings;
     private AiMode _currentMode = AiMode.Ask;
     private bool _thinkingEnabled = true;
@@ -112,6 +119,7 @@ public sealed class AiPanel : Border
         BuildChatHistory(root);
         BuildAttachmentsArea(root);
         BuildInputArea(root);
+        BuildHistoryOverlay(root);
 
         Child = root;
 
@@ -126,89 +134,84 @@ public sealed class AiPanel : Border
             Background = Theme.PanelHeader,
             BorderBrush = Theme.Border,
             BorderThickness = new Thickness(0, 0, 0, 1),
-            Padding = new Thickness(10, 8, 10, 8)
+            Padding = new Thickness(12, 10, 12, 10)
         };
 
         var headerGrid = new Grid();
-        headerGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        headerGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        headerGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // Row 0: Brand & Top actions
+        headerGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // Row 1: Mode Ask/Agent
+        headerGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // Row 2: Model & Thinking
 
-        // Row 0: Mode Ask / Agent + Clear
-        var modeRow = new Grid();
-        modeRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        modeRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        // ── Row 0 : Identité KEYCE IA & Boutons d'action ──────────────
+        var brandRow = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+        brandRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        brandRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var modeSelector = new Border
+        var brandLeft = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        var aiBrandIcon = SvgIconFactory.Create("ai", 15);
+        aiBrandIcon.Margin = new Thickness(0, 0, 6, 0);
+        brandLeft.Children.Add(aiBrandIcon);
+
+        brandLeft.Children.Add(new TextBlock
+        {
+            Text = "KEYCE IA",
+            FontWeight = FontWeights.Bold,
+            FontSize = 13,
+            Foreground = Theme.Text,
+            VerticalAlignment = VerticalAlignment.Center
+        });
+
+        var assistantBadge = new Border
         {
             Background = Theme.Surface,
-            CornerRadius = new CornerRadius(6),
-            Padding = new Thickness(2),
-            HorizontalAlignment = HorizontalAlignment.Left
+            BorderBrush = Theme.Border,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(3),
+            Padding = new Thickness(4, 1, 4, 1),
+            Margin = new Thickness(6, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new TextBlock
+            {
+                Text = "Assistant",
+                FontSize = 9,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = Theme.Muted
+            }
         };
-        var modeSp = new StackPanel { Orientation = Orientation.Horizontal };
+        brandLeft.Children.Add(assistantBadge);
+        Grid.SetColumn(brandLeft, 0);
+        brandRow.Children.Add(brandLeft);
 
-        _askModeBtn.Content = "Ask";
-        _askModeBtn.Width = 60;
-        _askModeBtn.Height = 26;
-        _askModeBtn.FontSize = 12;
-        _askModeBtn.FontWeight = FontWeights.SemiBold;
-        _askModeBtn.BorderThickness = new Thickness(0);
-        _askModeBtn.Cursor = Cursors.Hand;
-        _askModeBtn.Click += (_, _) => SetMode(AiMode.Ask);
+        // Boutons à droite : Historique, Nouveau chat, Fermer
+        var rightBtns = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
 
-        _agentModeBtn.Content = "Agent";
-        _agentModeBtn.Width = 60;
-        _agentModeBtn.Height = 26;
-        _agentModeBtn.FontSize = 12;
-        _agentModeBtn.FontWeight = FontWeights.SemiBold;
-        _agentModeBtn.BorderThickness = new Thickness(0);
-        _agentModeBtn.Cursor = Cursors.Hand;
-        _agentModeBtn.Click += (_, _) => SetMode(AiMode.Agent);
-
-        modeSp.Children.Add(_askModeBtn);
-        modeSp.Children.Add(_agentModeBtn);
-        modeSelector.Child = modeSp;
-        Grid.SetColumn(modeSelector, 0);
-        modeRow.Children.Add(modeSelector);
-
-        // Boutons à droite : historique, nouvelle conversation et fermeture.
-        var rightBtns = new StackPanel
-        {
-            Orientation = Orientation.Horizontal
-        };
-
-        // Bouton Historique.
         _historyBtn.Content = SvgIconFactory.Create("history", 14);
-        _historyBtn.ToolTip = "Afficher les conversations précédentes";
+        _historyBtn.ToolTip = "Historique des conversations";
         _historyBtn.Background = Brushes.Transparent;
         _historyBtn.BorderThickness = new Thickness(0);
-        _historyBtn.Width = 28;
-        _historyBtn.Height = 28;
-        _historyBtn.Margin = new Thickness(0, 0, 4, 0);
+        _historyBtn.Width = 26;
+        _historyBtn.Height = 26;
+        _historyBtn.Margin = new Thickness(0, 0, 2, 0);
         _historyBtn.Cursor = Cursors.Hand;
         _historyBtn.Click += (_, _) =>
         {
-            if (_isGenerating)
-                return;
-
+            if (_isGenerating) return;
             HistoryRequested?.Invoke();
         };
         rightBtns.Children.Add(_historyBtn);
 
-        // Bouton Nouvelle conversation.
         _clearBtn.Content = SvgIconFactory.Create("plus", 14);
         _clearBtn.ToolTip = "Nouvelle conversation";
         _clearBtn.Background = Brushes.Transparent;
         _clearBtn.BorderThickness = new Thickness(0);
-        _clearBtn.Width = 28;
-        _clearBtn.Height = 28;
-        _clearBtn.Margin = new Thickness(0, 0, 4, 0);
+        _clearBtn.Width = 26;
+        _clearBtn.Height = 26;
+        _clearBtn.Margin = new Thickness(0, 0, 2, 0);
         _clearBtn.Cursor = Cursors.Hand;
         _clearBtn.Click += (_, _) =>
         {
-            if (_isGenerating)
-                return;
-
+            if (_isGenerating) return;
+            ShowHistoryView(false);
             _chatMessages.Children.Clear();
             _currentAttachments.Clear();
             _attachmentsHost.Children.Clear();
@@ -218,28 +221,66 @@ public sealed class AiPanel : Border
         };
         rightBtns.Children.Add(_clearBtn);
 
-        // Bouton Fermer.
         _closeBtn.Content = SvgIconFactory.Create("close", 14);
         _closeBtn.ToolTip = "Masquer le panneau IA";
         _closeBtn.Background = Brushes.Transparent;
         _closeBtn.BorderThickness = new Thickness(0);
-        _closeBtn.Width = 28;
-        _closeBtn.Height = 28;
+        _closeBtn.Width = 26;
+        _closeBtn.Height = 26;
         _closeBtn.Cursor = Cursors.Hand;
         _closeBtn.Click += (_, _) => CloseRequested?.Invoke();
         rightBtns.Children.Add(_closeBtn);
 
-
-        
-
         Grid.SetColumn(rightBtns, 1);
-        modeRow.Children.Add(rightBtns);
+        brandRow.Children.Add(rightBtns);
 
-        Grid.SetRow(modeRow, 0);
+        Grid.SetRow(brandRow, 0);
+        headerGrid.Children.Add(brandRow);
+
+        // ── Row 1 : Sélecteur de mode Ask / Agent ─────────────────────
+        var modeRow = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+
+        var modeSelector = new Border
+        {
+            Background = Theme.Surface,
+            BorderBrush = Theme.Border,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(2),
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        var modeGrid = new Grid();
+        modeGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        modeGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        _askModeBtn.Content = "Ask";
+        _askModeBtn.Height = 24;
+        _askModeBtn.FontSize = 11;
+        _askModeBtn.FontWeight = FontWeights.SemiBold;
+        _askModeBtn.BorderThickness = new Thickness(0);
+        _askModeBtn.Cursor = Cursors.Hand;
+        _askModeBtn.Click += (_, _) => SetMode(AiMode.Ask);
+        Grid.SetColumn(_askModeBtn, 0);
+        modeGrid.Children.Add(_askModeBtn);
+
+        _agentModeBtn.Content = "Agent";
+        _agentModeBtn.Height = 24;
+        _agentModeBtn.FontSize = 11;
+        _agentModeBtn.FontWeight = FontWeights.SemiBold;
+        _agentModeBtn.BorderThickness = new Thickness(0);
+        _agentModeBtn.Cursor = Cursors.Hand;
+        _agentModeBtn.Click += (_, _) => SetMode(AiMode.Agent);
+        Grid.SetColumn(_agentModeBtn, 1);
+        modeGrid.Children.Add(_agentModeBtn);
+
+        modeSelector.Child = modeGrid;
+        modeRow.Children.Add(modeSelector);
+
+        Grid.SetRow(modeRow, 1);
         headerGrid.Children.Add(modeRow);
 
-        // Row 1: Model selector & Thinking toggle
-        var optionsRow = new Grid { Margin = new Thickness(0, 8, 0, 0) };
+        // ── Row 2 : Choix du modèle & Thinking toggle ─────────────────
+        var optionsRow = new Grid();
         optionsRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         optionsRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
@@ -281,7 +322,7 @@ public sealed class AiPanel : Border
         Grid.SetColumn(_thinkingBtn, 1);
         optionsRow.Children.Add(_thinkingBtn);
 
-        Grid.SetRow(optionsRow, 1);
+        Grid.SetRow(optionsRow, 2);
         headerGrid.Children.Add(optionsRow);
 
         header.Child = headerGrid;
@@ -289,6 +330,287 @@ public sealed class AiPanel : Border
         root.Children.Add(header);
 
         UpdateModeButtons();
+    }
+
+    private void BuildHistoryOverlay(Grid root)
+    {
+        _historyOverlay.Background = Theme.Sidebar;
+        _historyOverlay.BorderBrush = Theme.Border;
+        _historyOverlay.BorderThickness = new Thickness(0, 1, 0, 0);
+        _historyOverlay.Visibility = Visibility.Collapsed;
+
+        var grid = new Grid();
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // Header
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // List
+
+        // Header de l'historique
+        var headerBorder = new Border
+        {
+            Background = Theme.PanelHeader,
+            BorderBrush = Theme.Border,
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            Padding = new Thickness(10, 8, 10, 8)
+        };
+
+        var headerGrid = new Grid();
+        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var leftStack = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+
+        var backBtn = new Button
+        {
+            Content = SvgIconFactory.Create("chevron-left", 14),
+            ToolTip = "Retour à la conversation",
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Width = 26,
+            Height = 26,
+            Margin = new Thickness(0, 0, 6, 0),
+            Cursor = Cursors.Hand
+        };
+        backBtn.Click += (_, _) => ShowHistoryView(false);
+        leftStack.Children.Add(backBtn);
+
+        leftStack.Children.Add(new TextBlock
+        {
+            Text = "Historique",
+            FontWeight = FontWeights.Bold,
+            FontSize = 13,
+            Foreground = Theme.Text,
+            VerticalAlignment = VerticalAlignment.Center
+        });
+
+        _historyCountText.Text = "(0)";
+        _historyCountText.FontSize = 11;
+        _historyCountText.Foreground = Theme.Muted;
+        _historyCountText.Margin = new Thickness(6, 0, 0, 0);
+        _historyCountText.VerticalAlignment = VerticalAlignment.Center;
+        leftStack.Children.Add(_historyCountText);
+
+        Grid.SetColumn(leftStack, 0);
+        headerGrid.Children.Add(leftStack);
+
+        var newConvBtn = new Button
+        {
+            Background = Theme.Surface,
+            BorderBrush = Theme.Border,
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(8, 4, 8, 4),
+            Cursor = Cursors.Hand,
+            ToolTip = "Créer une nouvelle conversation"
+        };
+        var newSp = new StackPanel { Orientation = Orientation.Horizontal };
+        var plusIcon = SvgIconFactory.Create("plus", 11);
+        plusIcon.Margin = new Thickness(0, 0, 4, 0);
+        newSp.Children.Add(plusIcon);
+        newSp.Children.Add(new TextBlock
+        {
+            Text = "Nouveau",
+            FontSize = 11,
+            Foreground = Theme.Text,
+            FontWeight = FontWeights.SemiBold,
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        newConvBtn.Content = newSp;
+        newConvBtn.Click += (_, _) =>
+        {
+            ShowHistoryView(false);
+            ClearRequested?.Invoke();
+        };
+
+        Grid.SetColumn(newConvBtn, 1);
+        headerGrid.Children.Add(newConvBtn);
+        headerBorder.Child = headerGrid;
+
+        Grid.SetRow(headerBorder, 0);
+        grid.Children.Add(headerBorder);
+
+        // Liste défilante des conversations
+        var scroll = new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Padding = new Thickness(10, 8, 10, 10)
+        };
+
+        _historyItemsHost.Orientation = Orientation.Vertical;
+        scroll.Content = _historyItemsHost;
+
+        Grid.SetRow(scroll, 1);
+        grid.Children.Add(scroll);
+
+        _historyOverlay.Child = grid;
+
+        Grid.SetRow(_historyOverlay, 1);
+        Grid.SetRowSpan(_historyOverlay, 4);
+        root.Children.Add(_historyOverlay);
+    }
+
+    public void ShowHistoryView(bool show)
+    {
+        _historyOverlay.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        _historyBtn.Background = show ? Theme.SurfaceHover : Brushes.Transparent;
+    }
+
+    public void UpdateHistoryList(IReadOnlyList<AiConversation> conversations, Guid? activeConversationId)
+    {
+        _historyItemsHost.Children.Clear();
+
+        int count = conversations?.Count ?? 0;
+        _historyCountText.Text = $"({count})";
+
+        if (conversations == null || conversations.Count == 0)
+        {
+            var emptyBorder = new Border
+            {
+                Padding = new Thickness(20, 50, 20, 20),
+                HorizontalAlignment = HorizontalAlignment.Center
+            };
+            var emptyStack = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center };
+            var emptyIcon = SvgIconFactory.Create("history", 28);
+            emptyIcon.HorizontalAlignment = HorizontalAlignment.Center;
+            emptyIcon.Margin = new Thickness(0, 0, 0, 12);
+            emptyStack.Children.Add(emptyIcon);
+
+            emptyStack.Children.Add(new TextBlock
+            {
+                Text = "Aucune conversation enregistrée",
+                FontWeight = FontWeights.SemiBold,
+                FontSize = 13,
+                Foreground = Theme.Text,
+                TextAlignment = TextAlignment.Center,
+                Margin = new Thickness(0, 0, 0, 4)
+            });
+            emptyStack.Children.Add(new TextBlock
+            {
+                Text = "Vos échanges avec KEYCE IA apparaîtront ici pour que vous puissiez les reprendre à tout moment.",
+                FontSize = 11,
+                Foreground = Theme.Muted,
+                TextAlignment = TextAlignment.Center,
+                TextWrapping = TextWrapping.Wrap,
+                MaxWidth = 260
+            });
+            emptyBorder.Child = emptyStack;
+            _historyItemsHost.Children.Add(emptyBorder);
+            return;
+        }
+
+        foreach (var c in conversations.OrderByDescending(conv => conv.UpdatedAt))
+        {
+            bool isCurrent = activeConversationId.HasValue && c.Id == activeConversationId.Value;
+
+            var card = new Border
+            {
+                Background = isCurrent ? Theme.SurfaceHover : Theme.Surface,
+                BorderBrush = isCurrent ? Theme.Accent : Theme.Border,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(10, 8, 10, 8),
+                Margin = new Thickness(0, 0, 0, 8),
+                Cursor = Cursors.Hand
+            };
+
+            card.MouseEnter += (_, _) => { if (!isCurrent) card.Background = Theme.SurfaceHover; };
+            card.MouseLeave += (_, _) => { if (!isCurrent) card.Background = Theme.Surface; };
+
+            var cardGrid = new Grid();
+            cardGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            cardGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var infoStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+
+            var titleRow = new StackPanel { Orientation = Orientation.Horizontal };
+            var titleBlock = new TextBlock
+            {
+                Text = string.IsNullOrWhiteSpace(c.Title) ? "Nouvelle conversation" : c.Title,
+                FontWeight = isCurrent ? FontWeights.Bold : FontWeights.SemiBold,
+                FontSize = 12,
+                Foreground = isCurrent ? Theme.Accent : Theme.Text,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                MaxWidth = 200
+            };
+            titleRow.Children.Add(titleBlock);
+
+            if (isCurrent)
+            {
+                var activeBadge = new Border
+                {
+                    Background = Theme.AccentSoft,
+                    BorderBrush = Theme.Accent,
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(3),
+                    Padding = new Thickness(4, 1, 4, 1),
+                    Margin = new Thickness(6, 0, 0, 0),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Child = new TextBlock
+                    {
+                        Text = "Active",
+                        FontSize = 9,
+                        FontWeight = FontWeights.Bold,
+                        Foreground = Theme.Accent
+                    }
+                };
+                titleRow.Children.Add(activeBadge);
+            }
+            infoStack.Children.Add(titleRow);
+
+            string timeText = c.UpdatedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm");
+            int userMsgCount = c.Messages.Count(m => m.Role != "system");
+            string msgCountText = userMsgCount <= 1 ? $"{userMsgCount} message" : $"{userMsgCount} messages";
+
+            var subBlock = new TextBlock
+            {
+                Text = $"{timeText} • {c.ActiveMode} • {msgCountText}",
+                FontSize = 10,
+                Foreground = Theme.Muted,
+                Margin = new Thickness(0, 3, 0, 0)
+            };
+            infoStack.Children.Add(subBlock);
+
+            Grid.SetColumn(infoStack, 0);
+            cardGrid.Children.Add(infoStack);
+
+            var deleteBtn = new Button
+            {
+                Content = SvgIconFactory.Create("trash", 12),
+                ToolTip = "Supprimer définitivement cette conversation",
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                Width = 24,
+                Height = 24,
+                Cursor = Cursors.Hand,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(6, 0, 0, 0)
+            };
+            deleteBtn.Click += (s, e) =>
+            {
+                e.Handled = true;
+                var res = MessageBox.Show(
+                    Window.GetWindow(this),
+                    $"Voulez-vous vraiment supprimer définitivement la conversation « {c.Title} » ?",
+                    "Supprimer la conversation",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
+
+                if (res == MessageBoxResult.Yes)
+                {
+                    ConversationDeleted?.Invoke(c.Id);
+                }
+            };
+
+            Grid.SetColumn(deleteBtn, 1);
+            cardGrid.Children.Add(deleteBtn);
+
+            card.Child = cardGrid;
+            card.MouseLeftButtonUp += (s, e) =>
+            {
+                ConversationSelected?.Invoke(c.Id);
+                ShowHistoryView(false);
+            };
+
+            _historyItemsHost.Children.Add(card);
+        }
     }
 
     private void BuildStatusBar(Grid root)
@@ -1114,7 +1436,7 @@ public sealed class AiPanel : Border
         _chatScroll.ScrollToEnd();
     }
 
-    private void ShowWelcomeMessage()
+    public void ShowWelcomeMessage()
     {
         var welcome = new Border
         {
