@@ -7,6 +7,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using KEYCE_KODER.App.Services;
+using KEYCE_KODER.AI;
 
 namespace KEYCE_KODER.App.Views;
 
@@ -33,7 +34,9 @@ public enum AssistantVisualState
 public sealed class AiPanel : Border
 {
     public event Action<string, AiMode, string, bool, IReadOnlyList<string>>? MessageSubmitted;
+    public event Action<AiMode, string>? ConversationSettingsChanged;
     public event Action? ClearRequested;
+    public event Action? HistoryRequested;
     public event Action? CloseRequested;
     public event Action? StopRequested;
     public event Action? RetryRequested;
@@ -44,6 +47,7 @@ public sealed class AiPanel : Border
     private readonly Button _askModeBtn = new();
     private readonly Button _agentModeBtn = new();
     private readonly Button _thinkingBtn = new();
+    private readonly Button _historyBtn = new();
     private readonly Button _clearBtn = new();
     private readonly Button _closeBtn = new();
 
@@ -73,7 +77,7 @@ public sealed class AiPanel : Border
     private AssistantVisualState _currentVisualState = AssistantVisualState.Ready;
 
     public bool IsGenerating => _isGenerating;
-
+    private bool _isRestoringConversationSettings;
     private AiMode _currentMode = AiMode.Ask;
     private bool _thinkingEnabled = true;
 
@@ -167,10 +171,32 @@ public sealed class AiPanel : Border
         Grid.SetColumn(modeSelector, 0);
         modeRow.Children.Add(modeSelector);
 
-        // Boutons à droite : vider et fermer
-        var rightBtns = new StackPanel { Orientation = Orientation.Horizontal };
+        // Boutons à droite : historique, nouvelle conversation et fermeture.
+        var rightBtns = new StackPanel
+        {
+            Orientation = Orientation.Horizontal
+        };
 
-        _clearBtn.Content = SvgIconFactory.Create("trash", 14);
+        // Bouton Historique.
+        _historyBtn.Content = SvgIconFactory.Create("history", 14);
+        _historyBtn.ToolTip = "Afficher les conversations précédentes";
+        _historyBtn.Background = Brushes.Transparent;
+        _historyBtn.BorderThickness = new Thickness(0);
+        _historyBtn.Width = 28;
+        _historyBtn.Height = 28;
+        _historyBtn.Margin = new Thickness(0, 0, 4, 0);
+        _historyBtn.Cursor = Cursors.Hand;
+        _historyBtn.Click += (_, _) =>
+        {
+            if (_isGenerating)
+                return;
+
+            HistoryRequested?.Invoke();
+        };
+        rightBtns.Children.Add(_historyBtn);
+
+        // Bouton Nouvelle conversation.
+        _clearBtn.Content = SvgIconFactory.Create("plus", 14);
         _clearBtn.ToolTip = "Nouvelle conversation";
         _clearBtn.Background = Brushes.Transparent;
         _clearBtn.BorderThickness = new Thickness(0);
@@ -180,7 +206,9 @@ public sealed class AiPanel : Border
         _clearBtn.Cursor = Cursors.Hand;
         _clearBtn.Click += (_, _) =>
         {
-            if (_isGenerating) return;
+            if (_isGenerating)
+                return;
+
             _chatMessages.Children.Clear();
             _currentAttachments.Clear();
             _attachmentsHost.Children.Clear();
@@ -190,6 +218,7 @@ public sealed class AiPanel : Border
         };
         rightBtns.Children.Add(_clearBtn);
 
+        // Bouton Fermer.
         _closeBtn.Content = SvgIconFactory.Create("close", 14);
         _closeBtn.ToolTip = "Masquer le panneau IA";
         _closeBtn.Background = Brushes.Transparent;
@@ -199,6 +228,9 @@ public sealed class AiPanel : Border
         _closeBtn.Cursor = Cursors.Hand;
         _closeBtn.Click += (_, _) => CloseRequested?.Invoke();
         rightBtns.Children.Add(_closeBtn);
+
+
+        
 
         Grid.SetColumn(rightBtns, 1);
         modeRow.Children.Add(rightBtns);
@@ -211,7 +243,7 @@ public sealed class AiPanel : Border
         optionsRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         optionsRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var models = new[] { "qwen3.5:latest", "qwen2.5-coder:latest" };
+        var models = new[] { "qwen3.5:latest", "qwen2.5-coder:latest", "qwen3.5:4b-mtp-q8_0", "qwen3.5:2b-q4_K_M" };
         foreach (var m in models) _modelSelector.Items.Add(m);
         _modelSelector.SelectedItem = models.FirstOrDefault(m => m == AppSettings.Current.AiModel) ?? models[0];
         _modelSelector.Height = 26;
@@ -219,10 +251,15 @@ public sealed class AiPanel : Border
         _modelSelector.Margin = new Thickness(0, 0, 8, 0);
         _modelSelector.SelectionChanged += (_, _) =>
         {
+            if (_isRestoringConversationSettings)
+                return;
+
             if (_modelSelector.SelectedItem is string m)
             {
                 AppSettings.Current.AiModel = m;
                 AppSettings.Current.Save();
+
+                ConversationSettingsChanged?.Invoke(_currentMode, m);
             }
         };
         Grid.SetColumn(_modelSelector, 0);
@@ -447,6 +484,31 @@ public sealed class AiPanel : Border
 
         _currentMode = mode;
         UpdateModeButtons();
+
+        if (!_isRestoringConversationSettings)
+        {
+            ConversationSettingsChanged?.Invoke(
+                _currentMode,
+                _modelSelector.SelectedItem as string ?? AppSettings.Current.AiModel);
+        }
+    }
+
+    public void RestoreConversationSettings(string model, AiMode mode)
+    {
+        _isRestoringConversationSettings = true;
+
+        try
+        {
+            if (_modelSelector.Items.Contains(model))
+                _modelSelector.SelectedItem = model;
+
+            _currentMode = mode;
+            UpdateModeButtons();
+        }
+        finally
+        {
+            _isRestoringConversationSettings = false;
+        }
     }
 
     private void UpdateModeButtons()
@@ -666,6 +728,47 @@ public sealed class AiPanel : Border
 
         string model = _modelSelector.SelectedItem as string ?? "qwen3.5:latest";
         MessageSubmitted?.Invoke(text, _currentMode, model, _thinkingEnabled, attachments);
+    }
+
+    public void ClearConversationMessages()
+    {
+        _chatMessages.Children.Clear();
+
+        _currentAttachments.Clear();
+        _attachmentsHost.Children.Clear();
+
+        SetAssistantState(AssistantVisualState.Ready);
+    }
+
+    public void RestoreConversationMessages(
+    IReadOnlyList<AiConversationMessage> messages)
+    {
+        ClearConversationMessages();
+
+        foreach (var message in messages)
+        {
+            if (string.IsNullOrWhiteSpace(message.Content))
+                continue;
+
+            if (string.Equals(
+                message.Role,
+                "user",
+                StringComparison.OrdinalIgnoreCase))
+            {
+                AddUserMessage(message.DisplayContent ?? message.Content);
+            }
+            else if (string.Equals(
+                message.Role,
+                "assistant",
+                StringComparison.OrdinalIgnoreCase))
+            {
+                AddAssistantMessage(
+                    message.Content,
+                    allowRetry: false);
+            }
+        }
+
+        SetAssistantState(AssistantVisualState.Ready);
     }
 
     public void AddUserMessage(string message, IReadOnlyList<string>? attachments = null)

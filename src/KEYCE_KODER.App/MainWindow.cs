@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
@@ -77,6 +77,21 @@ public class MainWindow : Window
     private readonly List<AiChatMessage> _aiHistory = new();
     private readonly AiToolRegistry _aiToolRegistry;
     private readonly AiToolExecutor _aiToolExecutor;
+
+    // Stockage persistant des conversations.
+    private readonly AiConversationStore _aiConversationStore =
+        new AiConversationStore(
+            Path.Combine(
+                Environment.GetFolderPath(
+                    Environment.SpecialFolder.ApplicationData),
+                "KEYCE_KODER/conversation_save",
+                "conversations.json"));
+
+    // Toutes les conversations enregistrées.
+    private readonly List<AiConversation> _aiConversations = new();
+
+    // Conversation actuellement ouverte.
+    private AiConversation? _activeAiConversation;
 
     private readonly Dictionary<string, TaskCompletionSource<bool>>
         _pendingAiConfirmations = new();
@@ -221,6 +236,7 @@ public class MainWindow : Window
 
         _aiToolRegistry.Register(new CreateFileTool());
         _aiToolRegistry.Register(new ReadFileTool());
+        _aiToolRegistry.Register(new AnalyzePythonTool());
         _aiToolRegistry.Register(new ListFilesTool());
         _aiToolRegistry.Register(new UpdateFileTool());
         _aiToolRegistry.Register(new DeleteFileTool());
@@ -418,8 +434,7 @@ public class MainWindow : Window
 
         _aiPanel.ClearRequested += () =>
         {
-            _lastAiSubmission = null;
-            _aiHistory.Clear();
+            StartNewAiConversation();
         };
 
         _aiSplitter = new GridSplitter
@@ -637,9 +652,143 @@ public class MainWindow : Window
         AddShortcut(_editActions.UnfoldAll, Key.U, ModifierKeys.Control | ModifierKeys.Alt);
 
         Closing += OnWindowClosing;
+        _ = InitializeAiConversationsAsync();
 
         // Mise à jour initiale de l'affichage (Welcome affiché si aucun document)
         UpdateWelcomeVisibility();
+    }
+    private void StartNewAiConversation()
+    {
+        // Ne pas changer de conversation pendant une génération.
+        if (_aiCts != null)
+        {
+            _aiPanel.AddAssistantMessage(
+                "Arrêtez d'abord la génération en cours avant de créer une nouvelle conversation.",
+                isError: true);
+
+            return;
+        }
+
+        // Réinitialiser les informations du dernier envoi.
+        _lastAiSubmission = null;
+
+        // Vider l'historique utilisé par le modèle.
+        _aiHistory.Clear();
+
+        // Créer une nouvelle conversation indépendante.
+        _activeAiConversation = new AiConversation
+        {
+            Title = "Nouvelle conversation",
+            Model = AppSettings.Current.AiModel,
+            ActiveMode = "Ask",
+            ContextSize = AppSettings.Current.AiContextSize,
+            HasCustomContextSize = false
+        };
+
+        // Vider l'affichage du panneau.
+        _aiPanel.ClearConversationMessages();
+
+        // Revenir au modèle par défaut et au mode Ask.
+        _aiPanel.RestoreConversationSettings(
+            _activeAiConversation.Model,
+            AiMode.Ask);
+    }
+
+    private async Task InitializeAiConversationsAsync()
+    {
+        try
+        {
+            // Charger toutes les conversations sauvegardées.
+            var savedConversations =
+                await _aiConversationStore.LoadAsync();
+
+            _aiConversations.Clear();
+            _aiConversations.AddRange(savedConversations);
+
+            // Sélectionner la conversation la plus récemment modifiée.
+            _activeAiConversation = _aiConversations
+                .OrderByDescending(c => c.UpdatedAt)
+                .FirstOrDefault();
+
+            // Si aucune conversation n'existe, en créer une nouvelle.
+            if (_activeAiConversation == null)
+            {
+                _activeAiConversation = new AiConversation
+                {
+                    Model = AppSettings.Current.AiModel,
+                    ActiveMode = "Ask"
+                };
+
+                _aiConversations.Add(_activeAiConversation);
+            }
+
+            // Restaurer le modèle et le mode.
+            if (!Enum.TryParse<AiMode>(
+                _activeAiConversation.ActiveMode,
+                true,
+                out var restoredMode))
+            {
+                restoredMode = AiMode.Ask;
+            }
+
+            _aiPanel.RestoreConversationSettings(
+                _activeAiConversation.Model,
+                restoredMode);
+
+            // Reconstruire l'historique interne complet de l'IA.
+            _aiHistory.Clear();
+
+            foreach (var message in _activeAiConversation.Messages)
+            {
+                _aiHistory.Add(new AiChatMessage(
+                    message.Role,
+                    message.Content,
+                    message.ToolCalls));
+            }
+
+            // Garantir la présence du prompt système.
+            if (!_aiHistory.Any(m =>
+                string.Equals(
+                    m.Role,
+                    "system",
+                    StringComparison.OrdinalIgnoreCase)))
+            {
+                _aiHistory.Insert(
+                    0,
+                    new AiChatMessage("system", AiSystemPrompt));
+            }
+
+            // Restaurer uniquement les messages visibles.
+            _aiPanel.RestoreConversationMessages(
+                _activeAiConversation.Messages);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                this,
+                "Impossible de charger les conversations IA.\n\n" +
+                ex.Message,
+                "KEYCE KODER - Historique IA",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+
+            _activeAiConversation = new AiConversation
+            {
+                Model = AppSettings.Current.AiModel,
+                ActiveMode = "Ask"
+            };
+
+            _aiConversations.Clear();
+            _aiConversations.Add(_activeAiConversation);
+
+            _aiHistory.Clear();
+
+            _aiPanel.ClearConversationMessages();
+
+            _aiPanel.RestoreConversationSettings(
+                _activeAiConversation.Model,
+                AiMode.Ask);
+        }
     }
 
     private void SetAiPanelVisible(bool visible)
@@ -665,12 +814,61 @@ public class MainWindow : Window
         SetAiPanelVisible(_aiHost.Visibility != Visibility.Visible);
     }
 
+    private bool IsOpenFileDirtyForAiUpdate(AiToolRequest request)
+    {
+        if (!string.Equals(
+            request.ToolName,
+            "update_file",
+            StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (request.Arguments.ValueKind != JsonValueKind.Object ||
+            !request.Arguments.TryGetProperty("path", out JsonElement pathElement) ||
+            pathElement.ValueKind != JsonValueKind.String)
+        {
+            return false;
+        }
+
+        string? relativePath = pathElement.GetString();
+        string? projectRoot = _getProjectRoot?.Invoke();
+
+        if (string.IsNullOrWhiteSpace(relativePath) ||
+            string.IsNullOrWhiteSpace(projectRoot))
+        {
+            return false;
+        }
+
+        try
+        {
+            var context = new AiToolContext(projectRoot);
+            string fullPath = context.ResolveProjectPath(relativePath);
+
+            return _tabManager.FindByPath(fullPath)?.Document.IsDirty == true;
+        }
+        catch (Exception)
+        {
+            // La validation definitive du chemin reste celle de l'outil.
+            return false;
+        }
+    }
+
     private async Task<bool> ConfirmAiToolAsync(
-    AiToolDefinition definition,
-    AiToolRequest request,
-    CancellationToken cancellationToken)
+        AiToolDefinition definition,
+        AiToolRequest request,
+        CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+
+        if (IsOpenFileDirtyForAiUpdate(request))
+        {
+            _aiPanel.AddAssistantMessage(
+                "Ce fichier est ouvert dans l'editeur et contient des modifications non enregistrees. Enregistrez-le avant de demander a l'Agent de le modifier.",
+                isError: true);
+
+            return false;
+        }
 
         string proposalId = Guid.NewGuid().ToString("N");
 
@@ -682,7 +880,7 @@ public class MainWindow : Window
             });
 
         string proposalText =
-            $"Opération demandée : {definition.Name}\n\n" +
+            $"Operation demandee : {definition.Name}\n\n" +
             $"Description : {definition.Description}\n\n" +
             $"Arguments exacts :\n{formattedArguments}";
 
@@ -698,22 +896,39 @@ public class MainWindow : Window
                 "En attente de votre autorisation");
 
             _aiPanel.AddAssistantMessage(
-                "L'Agent souhaite effectuer cette opération. " +
-                "Vérifiez les détails avant de choisir.",
+                "L'Agent souhaite effectuer cette operation. " +
+                "Verifiez les details avant de choisir.",
                 proposalAction: proposalText,
                 proposalId: proposalId);
 
             using var registration = cancellationToken.Register(
                 () => completion.TrySetCanceled(cancellationToken));
 
-            return await completion.Task;
+            bool approved = await completion.Task;
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (!approved)
+                return false;
+
+            // Deuxieme verification : le document a pu etre modifie
+            // pendant que la demande de confirmation etait affichee.
+            if (IsOpenFileDirtyForAiUpdate(request))
+            {
+                _aiPanel.AddAssistantMessage(
+                    "Le fichier a ete modifie dans l'editeur pendant la confirmation. Enregistrez vos modifications avant de recommencer.",
+                    isError: true);
+
+                return false;
+            }
+
+            return true;
         }
         finally
         {
             _pendingAiConfirmations.Remove(proposalId);
         }
     }
-
     private void ResolveAiConfirmation(
         string proposalId,
         bool approved)
@@ -872,6 +1087,9 @@ public class MainWindow : Window
         bool hasExecutedTool = false;
         bool turnCommitted = false;
 
+        // Référence au message utilisateur de ce tour.
+        AiChatMessage? submittedUserMessage = null;
+
         try
         {
             // Historique commun entre Ask et Agent.
@@ -924,6 +1142,8 @@ public class MainWindow : Window
             // Le message utilisateur est ajouté aux deux listes :
             // requestMessages pour le tour courant, turnMessages pour l'historique futur.
             var userMessage = new AiChatMessage("user", userContent);
+
+            submittedUserMessage = userMessage;
 
             requestMessages.Add(userMessage);
             turnMessages.Add(userMessage);
@@ -1055,6 +1275,68 @@ public class MainWindow : Window
                         toolRequest,
                         toolContext!,
                         currentCts.Token);
+                    // Synchronisation de l'editeur apres une mise a jour reussie.
+                    if (toolResult.Success &&
+                        string.Equals(toolCall.Name, "update_file", StringComparison.Ordinal) &&
+                        toolCall.Arguments.ValueKind == JsonValueKind.Object &&
+                        toolCall.Arguments.TryGetProperty("path", out JsonElement updatedPathElement) &&
+                        updatedPathElement.ValueKind == JsonValueKind.String)
+                    {
+                        string? relativePath = updatedPathElement.GetString();
+                        string? projectRoot = _getProjectRoot?.Invoke();
+
+                        if (!string.IsNullOrWhiteSpace(relativePath) &&
+                            !string.IsNullOrWhiteSpace(projectRoot))
+                        {
+                            try
+                            {
+                                var updateContext = new AiToolContext(projectRoot);
+                                string fullPath = updateContext.ResolveProjectPath(relativePath);
+
+                                EditorTab? updatedTab = _tabManager.FindByPath(fullPath);
+
+                                if (updatedTab != null)
+                                {
+                                    if (updatedTab.Document.IsDirty)
+                                    {
+                                        _aiPanel.AddAssistantMessage(
+                                            "Le fichier a ete modifie sur le disque par l'Agent, mais l'editeur contient aussi des modifications non enregistrees. Votre texte dans l'editeur a ete conserve. Comparez les deux versions avant de continuer.",
+                                            isError: true);
+                                    }
+                                    else
+                                    {
+                                        string updatedContent = await File.ReadAllTextAsync(
+                                            fullPath,
+                                            currentCts.Token);
+
+                                        currentCts.Token.ThrowIfCancellationRequested();
+
+                                        // Ne jamais remplacer un texte saisi pendant la lecture.
+                                        if (updatedTab.Document.IsDirty)
+                                        {
+                                            _aiPanel.AddAssistantMessage(
+                                                "Le fichier a ete modifie dans l'editeur pendant son rechargement. Votre texte a ete conserve. Verifiez les deux versions.",
+                                                isError: true);
+                                        }
+                                        else
+                                        {
+                                            updatedTab.EditorService.Text = updatedContent;
+                                            updatedTab.EditorService.MarkSaved();
+                                            updatedTab.RefreshHeader();
+                                            UpdateWindowState();
+                                        }
+                                    }
+                                }
+                            }
+                            catch (Exception ex) when (ex is not OperationCanceledException)
+                            {
+                                _aiPanel.AddAssistantMessage(
+                                    "La mise a jour sur disque a reussi, mais le rechargement de l'onglet a echoue : " +
+                                    ex.Message,
+                                    isError: true);
+                            }
+                        }
+                    }
 
                     currentCts.Token.ThrowIfCancellationRequested();
 
@@ -1154,6 +1436,27 @@ public class MainWindow : Window
         }
         finally
         {
+            // Sauvegarder uniquement si le tour a été validé.
+            if (turnCommitted && _activeAiConversation != null)
+            {
+                try
+                {
+                    await SaveActiveAiConversationAsync(
+                        submittedUserMessage,
+                        msg,
+                        model,
+                        mode);
+                }
+                catch (Exception saveEx)
+                {
+                    _aiPanel.AddAssistantMessage(
+                        "Le traitement IA est terminé, mais la sauvegarde " +
+                        "de la conversation a échoué.\n\n" +
+                        saveEx.Message,
+                        isError: true);
+                }
+            }
+
             if (ReferenceEquals(_aiCts, currentCts))
             {
                 _aiCts = null;
@@ -1162,6 +1465,101 @@ public class MainWindow : Window
             currentCts.Dispose();
             _aiPanel.SetGenerating(false);
         }
+    }
+    private async Task SaveActiveAiConversationAsync(
+    AiChatMessage? submittedUserMessage,
+    string submittedText,
+    string model,
+    AiMode mode)
+    {
+        if (_activeAiConversation == null)
+            return;
+
+        var previousMessages = _activeAiConversation.Messages;
+
+        var savedMessages = new List<AiConversationMessage>(
+            _aiHistory.Count);
+
+        int previousSearchIndex = 0;
+
+        foreach (var message in _aiHistory)
+        {
+            string? displayContent = null;
+
+            // Pour le message utilisateur du tour actuel,
+            // conserver uniquement le texte saisi dans l'interface.
+            if (ReferenceEquals(message, submittedUserMessage))
+            {
+                displayContent = submittedText;
+            }
+            else
+            {
+                // Retrouver l'ancien message correspondant afin de
+                // préserver son contenu d'affichage personnalisé.
+                for (int i = previousSearchIndex;
+                    i < previousMessages.Count;
+                    i++)
+                {
+                    var previous = previousMessages[i];
+
+                    bool sameMessage =
+                        string.Equals(
+                            previous.Role,
+                            message.Role,
+                            StringComparison.OrdinalIgnoreCase)
+                        &&
+                        string.Equals(
+                            previous.Content,
+                            message.Content,
+                            StringComparison.Ordinal);
+
+                    if (!sameMessage)
+                        continue;
+
+                    displayContent = previous.DisplayContent;
+                    previousSearchIndex = i + 1;
+                    break;
+                }
+            }
+
+            savedMessages.Add(new AiConversationMessage
+            {
+                Role = message.Role,
+                Content = message.Content,
+                DisplayContent = displayContent,
+                ToolCalls = message.ToolCalls?.ToList()
+            });
+        }
+
+        // Générer le titre à partir du premier message utilisateur.
+        if (_activeAiConversation.Title == "Nouvelle conversation")
+        {
+            string title = submittedText
+                .Replace('\r', ' ')
+                .Replace('\n', ' ')
+                .Trim();
+
+            _activeAiConversation.Title =
+                title.Length > 45
+                    ? title[..45].TrimEnd() + "..."
+                    : title;
+        }
+
+        // Mettre à jour la conversation active.
+        _activeAiConversation.Messages = savedMessages;
+        _activeAiConversation.Model = model;
+        _activeAiConversation.ActiveMode = mode.ToString();
+        _activeAiConversation.UpdatedAt = DateTimeOffset.UtcNow;
+
+        // Éviter d'ajouter deux fois la même conversation.
+        if (!_aiConversations.Any(c =>
+            c.Id == _activeAiConversation.Id))
+        {
+            _aiConversations.Add(_activeAiConversation);
+        }
+
+        // Enregistrer toutes les conversations.
+        await _aiConversationStore.SaveAsync(_aiConversations);
     }
     private void ShowWelcome()
     {
