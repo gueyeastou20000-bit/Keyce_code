@@ -102,7 +102,9 @@ public class MainWindow : Window
 
     private const string AiSystemPrompt =
         "Tu es KEYCE KODER, un assistant intégré à un environnement de développement logiciel. " +
-        "Tu réponds en français par défaut, tu expliques clairement et tu proposes du code fiable. " +
+        "Tu réponds en français par défaut. " +
+        "Pour les salutations et discussions générales, réponds naturellement, poliment et de manière concise, sans générer de code informatique. " +
+        "Ne fournis de code que si l'utilisateur en fait expressément la demande ou si sa question porte sur un problème technique de programmation. " +
         "Tu ne prétends jamais avoir accès au projet si son contenu ne t'a pas été transmis. " +
         "Tu ne prétends jamais avoir effectué une opération sans preuve de son exécution.";
     private readonly Border _aiHost;
@@ -430,6 +432,10 @@ public class MainWindow : Window
             if (_aiCts != null) return;
             _lastAiSubmission = (msg, mode, model, thinking, atts);
             await ExecuteAiRequestAsync(msg, mode, model, thinking, atts);
+        };
+        _aiPanel.ModelsRefreshRequested += async () =>
+        {
+            await RefreshAiModelsAsync();
         };
 
         _aiPanel.ClearRequested += () =>
@@ -779,88 +785,62 @@ public class MainWindow : Window
             AiMode.Ask);
     }
 
+    
     private async Task InitializeAiConversationsAsync()
     {
         try
         {
-            // Charger toutes les conversations sauvegardées.
+            // Charger les anciennes conversations sans en sélectionner une.
             var savedConversations =
                 await _aiConversationStore.LoadAsync();
 
             _aiConversations.Clear();
             _aiConversations.AddRange(savedConversations);
 
-            // Sélectionner la conversation la plus récemment modifiée.
-            _activeAiConversation = _aiConversations
-                .OrderByDescending(c => c.UpdatedAt)
-                .FirstOrDefault();
-
-            // Si aucune conversation n'existe, en créer une nouvelle.
-            if (_activeAiConversation == null)
+            // Toujours démarrer sur une nouvelle discussion.
+            _activeAiConversation = new AiConversation
             {
-                _activeAiConversation = new AiConversation
-                {
-                    Model = AppSettings.Current.AiModel,
-                    ActiveMode = "Ask"
-                };
+                Title = "Nouvelle conversation",
+                Model = AppSettings.Current.AiModel,
+                ActiveMode = "Ask",
+                ThinkingEnabled = AppSettings.Current.AiThinkingEnabled,
+                ContextSize = AppSettings.Current.AiContextSize,
+                HasCustomContextSize = false
+            };
 
-                _aiConversations.Add(_activeAiConversation);
-            }
+            // Réinitialiser l'historique du modèle.
+            _aiHistory.Clear();
 
-            // Restaurer le modèle et le mode.
-            if (!Enum.TryParse<AiMode>(
-                _activeAiConversation.ActiveMode,
-                true,
-                out var restoredMode))
-            {
-                restoredMode = AiMode.Ask;
-            }
+            _aiHistory.Add(
+                new AiChatMessage("system", AiSystemPrompt));
+
+            // Afficher une conversation vide.
+            _aiPanel.ClearConversationMessages();
+            _aiPanel.ShowWelcomeMessage();
 
             _aiPanel.RestoreConversationSettings(
                 _activeAiConversation.Model,
-                restoredMode);
+                AiMode.Ask);
 
-            // Reconstruire l'historique interne complet de l'IA.
-            _aiHistory.Clear();
+            // Afficher uniquement les conversations déjà enregistrées.
+            _aiPanel.UpdateHistoryList(
+                _aiConversations,
+                null);
 
-            foreach (var message in _activeAiConversation.Messages)
-            {
-                _aiHistory.Add(new AiChatMessage(
-                    message.Role,
-                    message.Content,
-                    message.ToolCalls));
-            }
+            // Récupérer les modèles réellement installés dans Ollama.
+            var installedModels = await _ollamaClient.ListModelsAsync();
 
-            // Garantir la présence du prompt système.
-            if (!_aiHistory.Any(m =>
-                string.Equals(
-                    m.Role,
-                    "system",
-                    StringComparison.OrdinalIgnoreCase)))
-            {
-                _aiHistory.Insert(
-                    0,
-                    new AiChatMessage("system", AiSystemPrompt));
-            }
-
-            // Restaurer uniquement les messages visibles.
-            _aiPanel.RestoreConversationMessages(
-                _activeAiConversation.Messages);
-
-            if (_activeAiConversation.Messages.Count == 0)
-            {
-                _aiPanel.ShowWelcomeMessage();
-            }
-
-            _aiPanel.UpdateHistoryList(_aiConversations, _activeAiConversation.Id);
+            _aiPanel.SetAvailableModels(
+                installedModels,
+                _activeAiConversation.Model,
+                ollamaAvailable: installedModels.Count > 0);
         }
         catch (Exception ex)
         {
             MessageBox.Show(
                 this,
-                "Impossible de charger les conversations IA.\n\n" +
-                ex.Message,
-                "KEYCE KODER - Historique IA",
+                "Impossible d'initialiser KEYCE IA.\n\n" + ex.Message,
+                "KEYCE KODER - IA",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
 
@@ -870,18 +850,18 @@ public class MainWindow : Window
                 ActiveMode = "Ask"
             };
 
-            _aiConversations.Clear();
-            _aiConversations.Add(_activeAiConversation);
-
             _aiHistory.Clear();
+            _aiHistory.Add(new AiChatMessage("system", AiSystemPrompt));
 
             _aiPanel.ClearConversationMessages();
+            _aiPanel.ShowWelcomeMessage();
 
             _aiPanel.RestoreConversationSettings(
                 _activeAiConversation.Model,
                 AiMode.Ask);
         }
     }
+
 
     private void SetAiPanelVisible(bool visible)
     {
@@ -1033,6 +1013,33 @@ public class MainWindow : Window
         }
     }
 
+
+    private static bool ShouldIncludeIdeContext(string prompt, IReadOnlyList<string>? atts)
+    {
+        if (atts != null && atts.Count > 0)
+            return true;
+
+        if (string.IsNullOrWhiteSpace(prompt))
+            return false;
+
+        string trimmed = prompt.Trim().ToLowerInvariant();
+        if (trimmed is "bonjour" or "salut" or "hello" or "hi" or "hey" or "coucou" or "bonsoir"
+            or "merci" or "merci beaucoup" or "thanks" or "qui es-tu" or "qui es-tu ?" or "présente-toi"
+            or "aide" or "help")
+        {
+            return false;
+        }
+
+        string[] codeKeywords =
+        {
+            "ce code", "mon code", "le code", "ce fichier", "mon fichier", "le fichier",
+            "fichier actif", "dans l'éditeur", "dans l'editeur", "analyse", "explique",
+            "corrige", "refactorise", "erreur", "bug", "fonction", "classe", "méthode", "methode",
+            "compile", "syntaxe", "implémente", "implemente"
+        };
+
+        return codeKeywords.Any(k => trimmed.Contains(k, StringComparison.OrdinalIgnoreCase));
+    }
 
     private static async Task<string> ReadTextAttachmentsAsync(
         IReadOnlyList<string> attachments,
@@ -1201,20 +1208,24 @@ public class MainWindow : Window
                   "Les opérations sensibles nécessitent une confirmation de l'utilisateur gérée par l'application. " +
                   "Si un outil échoue ou est refusé, tiens-en compte. " +
                   "Après réception des résultats des outils, poursuis ton travail et donne une réponse finale claire."
-                : "MODE ASK : tu es en lecture seule. " +
-                  "Tu peux expliquer, analyser et conseiller, mais tu ne dois pas modifier de fichiers ni exécuter d'actions.";
+                : "MODE ASK : tu es en mode conversation et assistance en lecture seule. " +
+                  "Réponds naturellement à l'utilisateur. Ne génère pas de code informatique si l'utilisateur ne le demande pas expressément. " +
+                  "Tu ne dois pas modifier de fichiers ni exécuter d'actions.";
 
             requestMessages.Add(
                 new AiChatMessage("system", modeInstruction));
 
-            var tab = _tabManager.ActiveTab;
+            string userContent = msg;
 
-            string docInfo = tab != null
-                ? $"Fichier actif dans l'IDE : {tab.Document.Name}"
-                : "Aucun fichier ouvert dans l'IDE.";
-
-
-            string userContent = msg + "\n\n" + docInfo;
+            // N'injecter le contexte du fichier que si la requête le justifie ou si des pièces jointes sont présentes
+            if (ShouldIncludeIdeContext(msg, atts))
+            {
+                var tab = _tabManager.ActiveTab;
+                if (tab != null && !string.IsNullOrWhiteSpace(tab.Document.Name))
+                {
+                    userContent += $"\n\n[Contexte IDE : fichier actif « {tab.Document.Name} »]";
+                }
+            }
 
             if (atts != null && atts.Count > 0)
             {
@@ -1256,6 +1267,7 @@ public class MainWindow : Window
             for (int round = 0; round < maxRounds; round++)
             {
                 currentCts.Token.ThrowIfCancellationRequested();
+                
 
                 var result = await _ollamaClient.SendChatAsync(
                     model,
@@ -1558,6 +1570,29 @@ public class MainWindow : Window
             _aiPanel.SetGenerating(false);
         }
     }
+
+    private async Task RefreshAiModelsAsync()
+    {
+        if (_aiPanel.IsGenerating)
+            return;
+
+        _aiPanel.SetModelsLoading(true);
+
+        try
+        {
+            var models = await _ollamaClient.ListModelsAsync();
+
+            _aiPanel.SetAvailableModels(
+                models,
+                AppSettings.Current.AiModel,
+                ollamaAvailable: models.Count > 0);
+        }
+        finally
+        {
+            _aiPanel.SetModelsLoading(false);
+        }
+    }
+
     private async Task SaveActiveAiConversationAsync(
     AiChatMessage? submittedUserMessage,
     string submittedText,
@@ -1667,7 +1702,14 @@ public class MainWindow : Window
         _welcomeView.Visibility = hasDocs ? Visibility.Collapsed : Visibility.Visible;
         _tabControl.Visibility = hasDocs ? Visibility.Visible : Visibility.Collapsed;
     }
-
+    public void SetAssistantState(
+    AssistantVisualState state,
+    object? statusMessage = null)
+    {
+        _aiPanel.SetAssistantState(
+            state,
+            statusMessage?.ToString());
+    }
     public void ShowSettings()
     {
         var win = new SettingsWindow(settings =>

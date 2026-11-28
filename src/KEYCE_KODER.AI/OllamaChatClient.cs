@@ -226,6 +226,45 @@ public sealed class OllamaChatClient : IDisposable
             "Ollama a répondu, mais aucun contenu ni appel d'outil exploitable n'a été retourné.");
     }
 
+    /// <summary>
+    /// Récupère la liste des modèles installés localement via l'API Ollama (/api/tags).
+    /// </summary>
+    public async Task<IReadOnlyList<string>> ListModelsAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            using var response = await _httpClient.GetAsync("api/tags", cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                return Array.Empty<string>();
+
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+
+            if (document.RootElement.TryGetProperty("models", out var modelsElement) &&
+                modelsElement.ValueKind == JsonValueKind.Array)
+            {
+                var list = new List<string>();
+                foreach (var modelElement in modelsElement.EnumerateArray())
+                {
+                    if (modelElement.TryGetProperty("name", out var nameElement) &&
+                        nameElement.ValueKind == JsonValueKind.String)
+                    {
+                        var name = nameElement.GetString();
+                        if (!string.IsNullOrWhiteSpace(name))
+                            list.Add(name);
+                    }
+                }
+                return list;
+            }
+        }
+        catch
+        {
+            // Retourne une liste vide si Ollama n'est pas accessible
+        }
+
+        return Array.Empty<string>();
+    }
+
     public void Dispose()
     {
         _httpClient.Dispose();

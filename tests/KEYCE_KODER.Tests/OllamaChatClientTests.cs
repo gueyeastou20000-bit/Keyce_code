@@ -291,4 +291,46 @@ public class OllamaChatClientTests
                 .GetInt32());
     }
 
+
+    [TestMethod]
+    public async Task ListModelsAsync_Success_ReturnsModelNames()
+    {
+        var mockHandler = new MockHttpMessageHandler((req, ct) =>
+        {
+            var json = """
+            {
+                "models": [
+                    { "name": "qwen3.5:latest" },
+                    { "name": "qwen2.5-coder:latest" }
+                ]
+            }
+            """;
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+            });
+        });
+
+        using var httpClient = new HttpClient(mockHandler) { BaseAddress = new Uri("http://localhost:11434/") };
+        using var client = new OllamaChatClient(httpClient);
+        var models = await client.ListModelsAsync();
+
+        Assert.AreEqual(2, models.Count);
+        Assert.AreEqual("qwen3.5:latest", models[0]);
+        Assert.AreEqual("qwen2.5-coder:latest", models[1]);
+    }
+
+    [TestMethod]
+    public async Task ListModelsAsync_NetworkError_ReturnsEmptyList()
+    {
+        var mockHandler = new MockHttpMessageHandler((req, ct) =>
+            throw new HttpRequestException("Connexion refusée"));
+
+        using var httpClient = new HttpClient(mockHandler) { BaseAddress = new Uri("http://localhost:11434/") };
+        using var client = new OllamaChatClient(httpClient);
+        var models = await client.ListModelsAsync();
+
+        Assert.IsNotNull(models);
+        Assert.AreEqual(0, models.Count);
+    }
 }
